@@ -1,16 +1,24 @@
 #!/usr/bin/env node
+/**
+ * CLI entry (`docs/design.md` §5.11): the `opencode-agent-plugins` binary.
+ *
+ * Thin wrapper over `src/lib/`, run on Node ≥ 22 outside OpenCode. The `git`
+ * binary is required only by git-backed commands (`install` from a URL,
+ * `check`, `update`) — it is checked lazily when such a command runs.
+ */
+
 import { createRequire } from 'node:module';
+import { parseArgs, boolFlag } from './args.js';
+import { cmdInstall } from './install.js';
+import { cmdRemove } from './remove.js';
+import { cmdCheck, cmdUpdate } from './update.js';
+import { cmdDoctor, cmdList, cmdPrune } from './inspect.js';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../../package.json') as { version: string };
 
-/** Commands of the CLI, per `docs/design.md` §5.11. */
-const COMMANDS = ['install', 'remove', 'check', 'update', 'list', 'doctor', 'prune'] as const;
-
-type Command = (typeof COMMANDS)[number];
-
 /**
- * Prints the CLI usage to stdout and exits with code 0.
+ * Prints the CLI usage to stdout.
  */
 function printHelp(): void {
   console.log(`opencode-agent-plugins ${packageJson.version}
@@ -50,43 +58,41 @@ without it.`);
 }
 
 /**
- * Parses `--help`/`--version` flags and dispatches to a command.
+ * Dispatches a parsed command line to the command implementation.
  *
- * @param args - CLI arguments (process argv without node/script).
+ * @param argv - CLI arguments (process argv without node/script).
  * @returns The process exit code.
  */
-export async function run(args: string[]): Promise<number> {
-  if (args.includes('--help') || args.includes('-h') || args.length === 0) {
-    printHelp();
-    return 0;
-  }
-  if (args.includes('--version') || args.includes('-v')) {
+export async function run(argv: string[]): Promise<number> {
+  const args = parseArgs(argv);
+  if (boolFlag(args.flags, '--version') || boolFlag(args.flags, '-v')) {
     console.log(packageJson.version);
     return 0;
   }
-
-  const [command] = args;
-  if (!isCommand(command)) {
-    console.error(`unknown command: "${command}"`);
-    console.error('Run "opencode-agent-plugins --help" for usage.');
-    return 1;
+  if (boolFlag(args.flags, '--help') || boolFlag(args.flags, '-h') || args.command === '') {
+    printHelp();
+    return 0;
   }
-
-  console.error(
-    `"opencode-agent-plugins ${command}" is not implemented yet (scaffold). ` +
-      `Tracked plan: docs/design.md §5.11.`,
-  );
-  return 1;
-}
-
-/**
- * Checks whether the string names a known command.
- *
- * @param value - Candidate command name.
- * @returns True when the value is one of the CLI commands.
- */
-function isCommand(value: string): value is Command {
-  return (COMMANDS as readonly string[]).includes(value);
+  switch (args.command) {
+    case 'install':
+      return cmdInstall(args);
+    case 'remove':
+      return cmdRemove(args);
+    case 'check':
+      return cmdCheck(args);
+    case 'update':
+      return cmdUpdate(args);
+    case 'list':
+      return cmdList();
+    case 'doctor':
+      return cmdDoctor(args);
+    case 'prune':
+      return cmdPrune(args);
+    default:
+      console.error(`unknown command: "${args.command}"`);
+      console.error('Run "opencode-agent-plugins --help" for usage.');
+      return 1;
+  }
 }
 
 const exitCode = await run(process.argv.slice(2));

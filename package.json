@@ -42,7 +42,7 @@
     "cli"
   ],
   "scripts": {
-    "build": "rm -rf build && tsc -p tsconfig.build.json && node scripts/check-runtime-imports.mjs",
+    "build": "rm -rf build && tsc -p tsconfig.build.json && mkdir -p build/schemas && cp src/schemas/*.json build/schemas/ && node scripts/check-runtime-imports.mjs",
     "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -56,6 +56,8 @@
     "prepare": "husky || true"
   },
   "dependencies": {
+    "ajv": "8.20.0",
+    "jsonc-parser": "3.3.1",
     "zod": "4.5.4"
   },
   "devDependencies": {

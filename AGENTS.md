@@ -25,13 +25,33 @@ opencode-agent-plugins/
 ├── src/
 │   ├── index.ts            # opencode plugin entry: (input, options) => Hooks
 │   ├── options.ts          # Zod schema for the plugin options object
-│   ├── cli/index.ts        # CLI entry (bin: opencode-agent-plugins)
+│   ├── cli/                # CLI commands, one file per command group
+│   │   ├── index.ts        # CLI entry (bin: opencode-agent-plugins)
+│   │   ├── args.ts         # minimal flag/positional parser
+│   │   ├── prompts.ts      # stdin confirmation prompt
+│   │   └── install/remove/update/inspect.ts
 │   ├── lib/                # shared core — no @opencode-ai* runtime deps
-│   │                         (planned per docs/design.md §4.1: resolve.ts,
-│   │                         install.ts, store.ts, manifest.ts, mcp.ts,
-│   │                         skills.ts, paths.ts, data.ts, errors.ts — each
-│   │                         lands together with its implementation)
-│   ├── schemas/            # vendored schemas (imported as JSON, never fetched)
+│   │                         (per docs/design.md §4.1):
+│   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
+│   │   ├── install.ts      # install/remove operations (git + swap + config edit)
+│   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
+│   │   ├── git.ts          # git availability, ls-remote, clone/stage helpers
+│   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
+│   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
+│   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
+│   │   ├── mcp.ts          # mcp.json validation + translation to opencode config
+│   │   ├── remote.ts       # remote URL/header rule checks (§5.7)
+│   │   ├── skills.ts       # skill discovery + validation
+│   │   ├── frontmatter.ts  # minimal YAML frontmatter parser for SKILL.md
+│   │   ├── paths.ts        # containment + ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion
+│   │   ├── data.ts         # PLUGIN_DATA layout + creation
+│   │   ├── doctor.ts       # store/config drift report + prune
+│   │   ├── validate.ts     # shared “would register” pipeline (install preview)
+│   │   └── errors.ts       # failure taxonomy types + report-to-log mapping
+│   ├── register.ts         # plugin pipeline: resolve → validate → register
+│   │                         (config-hook logic; outside lib/ because it talks
+│   │                         to the opencode Config shape)
+│   ├── schemas/            # vendored schemas (committed, never fetched at runtime)
 │   │   ├── 1.0.0-plugin.schema.json
 │   │   └── 1.0.0-mcp.schema.json
 │   └── utils/              # dependency-free helpers (logger, ...)

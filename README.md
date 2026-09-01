@@ -27,11 +27,15 @@ manages the plugin lifecycle: install (from a local path or a git URL),
 remove, check for updates, update, list, and store hygiene (`doctor`/`prune`).
 
 > [!NOTE]
-> This repository is currently **scaffolded**: the build and test tooling,
-> the plugin entry point, the options schema, and the CLI skeleton are in
-> place; the plugin/CLI behavior follows the plan in
-> [`docs/design.md`](./docs/design.md). Components are being implemented
-> against that design, section by section.
+> The plugin registers components at **OpenCode startup**: the `config` hook
+> resolves each configured source (local paths in place, git sources against
+> the client store — never fetching), validates the package against the
+> [Agent Plugins specification](https://agent-plugins.org/specification),
+> creates `PLUGIN_DATA`, and mutates the live config. User-authored config
+> always wins: a pre-existing `mcp` entry or `skills.paths` entry that
+> collides with a plugin registration is left untouched. The CLI is the only
+> network-touching surface (`install`/`check`/`update`); see
+> [`docs/design.md`](./docs/design.md) for the full contract.
 
 ## Install
 

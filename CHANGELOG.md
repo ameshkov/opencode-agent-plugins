@@ -10,27 +10,39 @@ and this project adheres to
 
 ### Added
 
-- Project scaffold: TypeScript (ESM, `tsc` to `build/`) with a
-  base/build/test tsconfig split, Vitest, oxlint, Prettier, Markdownlint,
-  Knip, Husky pre-commit, Docker multi-stage quality gate, and a CI
-  workflow (`ci`, `docker`, `release` jobs) — mirrored from the
-  `opencode-sdd` layout.
-- Plugin entry (`src/index.ts`): the `config`-hook-only plugin entry that
-  parses options, normalizes `config.skills`, and logs — never throws.
-- Options schema (`src/options.ts`): Zod parsing of `plugins` / `prefix` /
-  `logLevel` with strict known keys, unknown-key warnings, and defaults.
-- Plugin logger (`src/utils/logger.ts`): structured `client.app.log`
-  entries with `logLevel` filtering and swallow-on-failure logging.
-- CLI entry (`src/cli/index.ts`): `--help` / `--version` plus the command
-  skeleton (`install`, `remove`, `check`, `update`, `list`, `doctor`,
-  `prune`) per `docs/design.md` §5.11.
-- Vendored Agent Plugins schemas (`src/schemas/`) with the dev-only
-  `scripts/update-schemas.mjs` fetch/verify/re-vendor helper.
-- `scripts/check-runtime-imports.mjs` build gate: fails the build on any
-  leaked `@opencode-ai/*` value import in `build/`.
+- Agent Plugins core (`src/lib/`): the shared, opencode-free implementation
+  of the spec conformance rules from `docs/design.md` — manifest validation
+  (Ajv against the vendored closed schema, unknown-field reclassification),
+  skill discovery/validation (frontmatter parsing, nested-`SKILL.md` guard),
+  `mcp.json` translation to OpenCode's `local`/`remote` config (stdio env
+  injection of `PLUGIN_ROOT`/`PLUGIN_DATA`, remote URL/header rules, `sse`
+  skipped), path containment + placeholder expansion, source parsing and
+  store resolution, client store layout (`installed`, `meta`, `backups`,
+  `data`), the failure taxonomy, and the shared install/update/remove/doctor
+  pipeline.
+- Plugin registration pipeline (`src/register.ts`): resolve → validate →
+  discover → register with user-config-wins collision handling, `prefix`
+  option, per-plugin failure isolation, PLUGIN_DATA creation, and structured
+  summaries — all through the `config` hook, never throwing.
+- CLI commands (`opencode-agent-plugins`): `install` (fetch → validate →
+  preview → confirm → register, `--dry-run`, `--no-register`), `remove`,
+  `check` (drift via `ls-remote`, tag/SHA semantics), `update` (staging →
+  validate → atomic `.old-*` swap), `list`, `doctor`, and `prune` — with
+  JSONC-preserving config edits (atomic writes + timestamped backups).
+- Unit/integration/CLI tests: spec-derived validation cases, plugin-entry
+  integration against the stub client, and end-to-end lifecycle tests against
+  a local git fixture (install/check/update/remove).
 
 ### Changed
 
+- Build now copies the vendored schemas into `build/schemas/` (loaded via
+  `createRequire` at runtime, never fetched).
+- `package.json` dependencies: added `ajv` and `jsonc-parser` (pinned).
+- Project scaffold (already present from the initial commit): TypeScript
+  (ESM, `tsc` to `build/`) with a base/build/test tsconfig split, Vitest,
+  oxlint, Prettier, Markdownlint, Knip, Husky pre-commit, Docker
+  multi-stage quality gate, and a CI workflow (`ci`, `docker`, `release`
+  jobs).
 - Switched linting from ESLint + typescript-eslint to oxlint
   (`oxlint.config.ts` replaces `eslint.config.mjs`, correctness category
   plus the project's explicit `max-lines` / `max-lines-per-function` /

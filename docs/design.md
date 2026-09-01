@@ -245,20 +245,28 @@ opencode-agent-plugins/
 ├── vitest.config.ts
 ├── src/
 │   ├── index.ts            # plugin entry: (input, options) => Hooks
+│   ├── register.ts         # config-hook pipeline: resolve → validate → register
 │   ├── cli/index.ts        # CLI entry (bin opencode-agent-plugins)
 │   ├── options.ts          # Zod schema for the plugin options object
 │   ├── lib/                # shared core - no @opencode-ai deps, pure node
 │   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
 │   │   ├── install.ts      # install/update/remove operations (git + swap + config edit)
+│   │   ├── update.ts       # check/update lifecycle (staging → validate → swap)
+│   │   ├── git.ts          # git availability, ls-remote, clone/stage helpers
+│   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
-│   │   ├── manifest.ts     # plugin.json validation
+│   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
 │   │   ├── mcp.ts          # mcp.json validation + translation
+│   │   ├── remote.ts       # remote URL/header rule checks (§7.2.1)
 │   │   ├── skills.ts       # skill discovery + validation
+│   │   ├── frontmatter.ts  # minimal YAML frontmatter parser for SKILL.md
 │   │   ├── paths.ts        # containment + ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion
 │   │   ├── data.ts         # PLUGIN_DATA layout + creation
-│   │   └── errors.ts       # failure taxonomy types + report-to-log mapping
+│   │   ├── doctor.ts       # store/config drift report + prune
+│   │   ├── validate.ts     # shared "would register" pipeline (install preview)
+│   │   └── errors.ts       # failure taxonomy types
 │   └── schemas/
-│       ├── 1.0.0-plugin.schema.json   # vendored (imported as JSON)
+│       ├── 1.0.0-plugin.schema.json   # vendored (imported via createRequire, never fetched)
 │       └── 1.0.0-mcp.schema.json
 ├── scripts/update-schemas.mjs  # dev-only: verify/re-download vendored schemas
 └── test/
@@ -430,7 +438,8 @@ URLs, npm package names, monorepo subpath selection (`#ref:subdir`).
 
 - **Schemas vendored, never fetched** (§5.2: "Clients MUST NOT retrieve a schema
   while loading a plugin"). The two JSON schemas are committed under
-  `src/schemas/` and imported as JSON at build time; `scripts/update-schemas.mjs`
+  `src/schemas/`, copied into `build/schemas/` by the build, and loaded at
+  runtime via `createRequire` (never fetched); `scripts/update-schemas.mjs`
   verifies their hashes against `agent-plugins.org/schemas/1.0.0/...` in CI
   (dev-time only; runtime is offline).
 - Validated with Ajv. The vendored schemas are verified to actually encode
