@@ -1,0 +1,29 @@
+# Build artifacts (rebuilt inside the image)
+build/
+dist/
+
+# CI / editor / git tooling
+.vscode/
+.husky/
+.github/
+.git/
+
+# Docker files (not needed inside the image)
+Dockerfile
+.dockerignore
+
+# Dependency directories (installed fresh in the image)
+node_modules/
+
+# Local environment & OS files
+.env
+.env.*
+*.key
+.DS_Store
+
+# Manual QA run output
+qa/evidence/
+qa/output/
+
+# Logs
+*.log

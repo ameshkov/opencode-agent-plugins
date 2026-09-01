@@ -1,0 +1,72 @@
+{
+  "name": "opencode-agent-plugins",
+  "version": "0.1.0",
+  "description": "Agent Plugins client for OpenCode: load, validate, and register Agent Plugins (skills + MCP servers) and manage their lifecycle via CLI.",
+  "license": "MIT",
+  "type": "module",
+  "main": "build/index.js",
+  "exports": {
+    ".": {
+      "import": "./build/index.js"
+    }
+  },
+  "bin": {
+    "opencode-agent-plugins": "build/cli/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ameshkov/opencode-agent-plugins.git"
+  },
+  "homepage": "https://github.com/ameshkov/opencode-agent-plugins#readme",
+  "bugs": {
+    "url": "https://github.com/ameshkov/opencode-agent-plugins/issues"
+  },
+  "author": "Andrey Meshkov <am@adguard.com>",
+  "keywords": [
+    "opencode",
+    "plugin",
+    "agent-plugins",
+    "skills",
+    "mcp",
+    "cli"
+  ],
+  "scripts": {
+    "build": "rm -rf build && tsc -p tsconfig.build.json && node scripts/check-runtime-imports.mjs",
+    "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf node_modules build",
+    "format:check": "prettier --check --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 '**/*.md'",
+    "format:fix": "prettier --write --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 --fix '**/*.md'",
+    "lint": "oxlint src test && pnpm knip",
+    "lint:fix": "oxlint src test --fix",
+    "knip": "knip --production",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
+    "prepare": "husky || true"
+  },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.25",
+    "@types/node": "26.4.0",
+    "husky": "9.1.7",
+    "knip": "6.34.0",
+    "markdownlint-cli2": "0.23.2",
+    "oxlint": "1.80.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

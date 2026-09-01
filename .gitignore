@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# CI output (extracted Docker build results)
+ci-output/
+
+# Manual QA run output
+qa/evidence/
+qa/output/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Local environment (secrets)
+.env
+.env.*
+!qa/.env.example
+*.key
+
+# Editor config
+.vscode
+*.code-workspace
+
+# opencode project artifacts (created by opencode itself when running in this repo)
+.opencode/

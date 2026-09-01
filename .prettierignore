@@ -1,0 +1,6 @@
+.pnpm-store/
+node_modules/
+build/
+.opencode/
+pnpm-lock.yaml
+*.md
