@@ -17,6 +17,13 @@
 # ---------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS deps
 
+# The unit-test gate runs real git (the CLI tests build an actual bare
+# repository for install/update fixtures), and the slim base image does not
+# include it.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git \
+  && rm -rf /var/lib/apt/lists/*
+
 # Use bash with pipefail for every RUN so a failing command piped into `tee`
 # (used by the lint/test stages to capture results) propagates its non-zero
 # exit status instead of being masked by `tee`, which always exits 0. The
