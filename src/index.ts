@@ -32,7 +32,15 @@ const agentPlugins: Plugin = async (input, options) => {
 
   return {
     config: async (config) => {
-      await registerAgentPlugins(config as RuntimeConfig, parsed, logger, input);
+      try {
+        await registerAgentPlugins(config as RuntimeConfig, parsed, logger, input);
+      } catch (error) {
+        // The hook must never throw: opencode would log a plugin error but
+        // registration is isolated per plugin anyway (§5.1).
+        await logger.error('agent plugins registration failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     },
   };
 };

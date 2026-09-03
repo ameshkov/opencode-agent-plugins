@@ -134,18 +134,29 @@ export function slugOf(url: string): string {
  *   name (non-URL, non-path) is resolved through the store.
  * - git URL: looked up in the client store by slug; missing → warn+skip
  *   failure, corrupted meta → error.
+ * - malformed ref (`#ref` with whitespace, empty ref): reported as a
+ *   failure, never thrown — the config hook must not throw (§5.1).
  *
  * @param raw - Source string.
  * @param workspaceDir - Workspace directory for relative paths.
  * @param env - Environment view for store-root resolution.
- * @returns The resolution result.
+ * @returns The resolution result; never throws.
  */
 export async function resolveSource(
   raw: string,
   workspaceDir: string,
   env = process.env,
 ): Promise<ResolveResult> {
-  const parsed = parseSource(raw);
+  let parsed: ParsedSource;
+  try {
+    parsed = parseSource(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      failure: failure('source-missing', message, { source: raw, section: '§5.3.1' }),
+    };
+  }
   if (parsed.kind === 'git') {
     return resolveGitSource(raw, parsed.source, env);
   }

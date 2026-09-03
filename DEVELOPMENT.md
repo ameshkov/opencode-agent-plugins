@@ -276,9 +276,57 @@ Notes:
 
 - BuildKit (`# syntax=docker/dockerfile:1`) is required for the pnpm
   cache mounts and for `--output type=local`.
-- `.dockerignore` excludes `build/`, `node_modules/`, and tooling
-  directories so the image always starts from a clean source tree.
+- `.dockerignore` keeps the build context lean: dependency and tooling
+  directories are excluded, while `build/` is kept because the e2e image
+  embeds the compiled plugin (the main Dockerfile rebuilds it anyway).
 - `ci-output/` is gitignored (see [`.gitignore`](./.gitignore)).
+
+### E2E Tests (Docker)
+
+The e2e suite in [`test-e2e/`](./test-e2e) is the release gate from
+`docs/design.md` §9.1/§9.2.4: it boots a **real opencode binary** and the
+fixture plugin package inside a container and asserts the config hook's
+registration actually reaches the model request.
+
+Everything opencode-related runs in Docker — no opencode is installed on
+the host:
+
+- `test-e2e/Dockerfile` builds an image with the pinned
+  `opencode-ai@<version>` CLI, the plugin compiled from this repo
+  (`build/`), the fixture plugin (skill + stdio MCP server), and a fake
+  OpenAI-compatible model server that captures every chat-completions
+  request.
+- `test-e2e/agent-plugins.e2e.test.ts` drives the scenario with
+  [Testcontainers](https://testcontainers.com/) (`testcontainers` npm
+  package): it builds the image, starts `opencode serve` inside the
+  container with its port published, and **connects to the opencode server
+  API from the host** — creates a session and sends a prompt through
+  `POST /session/{id}/message`. The fake model's first completion emits a
+  tool call to the plugin's MCP server, so opencode executes it; the test
+  then asserts on the executed tool result (`PLUGIN_ROOT` / `PLUGIN_DATA` /
+  `cwd` / the eagerly created data dir), on the tool definition in the
+  captured request, on the `hello` skill in `<available_skills>`, and on
+  the pinned per-release skills scan depth (the fixture contains a stray
+  nested `SKILL.md` on purpose). The same assertions run against the
+  `static` baseline — the config-hook values written directly into
+  `opencode.json`.
+- `test-e2e/bootstrap.mjs` is the container entrypoint (no shell in the
+  image): it writes the opencode config for the mode, starts the fake model
+  server in-process, and spawns `opencode serve` with its port published.
+  The test connects to the server API and reads the `CAPTURE:` lines the
+  fake model prints; `run-scenario.sh` no longer exists.
+
+Run it (requires a working Docker engine):
+
+```sh
+pnpm build   # the e2e image embeds the compiled plugin
+pnpm test:e2e
+```
+
+The opencode release under test comes from `OPENCODE_VERSION` (default:
+the `@opencode-ai/plugin` pin in `package.json`). The e2e suite is
+excluded from `pnpm test` / `pnpm check`; it runs under its own
+`vitest.test-e2e.config.ts`.
 
 ## Continuous Integration
 
@@ -291,6 +339,9 @@ to `main`/`master`, on `v*` tags, and on pull requests, with three jobs:
   [`Dockerfile`](./Dockerfile) `ci-output` collector on Ubuntu. It guards
   the reproducible, host-tool-free CI path described above ("Running
   Checks in Docker") alongside the native job.
+- **e2e** — the docker e2e suite (see "E2E Tests (Docker)") against the
+  opencode release pinned by `OPENCODE_VERSION`, on Ubuntu (runners have
+  Docker).
 - **release** — on `v*` tags, once the other jobs pass, builds the plugin,
   packs it, and publishes a GitHub Release with auto-generated notes and
   the resulting `*.tgz`.

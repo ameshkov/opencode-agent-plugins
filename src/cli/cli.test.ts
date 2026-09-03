@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { tempDir, storeEnv, skillMd } from '../../test/helpers.js';
+import { tempDir, storeEnv, skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../../test/helpers.js';
 import { cmdInstall } from './install.js';
 import { cmdRemove } from './remove.js';
 import { cmdCheck, cmdUpdate } from './update.js';
@@ -22,6 +22,40 @@ function git(args: string[], cwd?: string): Promise<string> {
       resolveResult(stdout);
     });
   });
+}
+
+/** Builds a bare git fixture from a file map and returns its source URL. */
+async function gitFixture(files: Record<string, string>): Promise<{
+  source: string;
+  slug: string;
+  cleanup: () => Promise<void>;
+}> {
+  const work = await tempDir('oap-cli-fixture-work-');
+  const bare = await tempDir('oap-cli-fixture-bare-');
+  const barePath = join(bare.root, 'remote.git');
+  await git(['init', '--bare', barePath]);
+  await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], barePath);
+  await git(['init', '-b', 'main', work.root]);
+  await git(['config', 'user.email', 'a@b.c'], work.root);
+  await git(['config', 'user.name', 'Test'], work.root);
+  for (const [rel, content] of Object.entries(files)) {
+    const target = join(work.root, rel);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content, 'utf8');
+  }
+  await git(['add', '-A'], work.root);
+  await git(['commit', '-m', 'init'], work.root);
+  await git(['remote', 'add', 'origin', barePath], work.root);
+  await git(['push', '-u', 'origin', 'main'], work.root);
+  const source = `file://${barePath}`;
+  return {
+    source,
+    slug: slugOf(source),
+    cleanup: async () => {
+      await work.cleanup();
+      await bare.cleanup();
+    },
+  };
 }
 
 /** Writes the fixture plugin into a working tree. */
@@ -121,6 +155,57 @@ describe('CLI lifecycle', () => {
     expect(exitCode).toBe(1);
   });
 
+  it('install aborts on fatal validation with nothing changed on disk (§5.12.1)', async () => {
+    const broken = await gitFixture({
+      'plugin.json': '{ not json',
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+    });
+    try {
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitCode = await cmdInstall(argsOf('install', [broken.source], ['--yes']));
+      expect(exitCode).toBe(1);
+      expect(err.mock.calls.some((call) => String(call[0]).includes('install will abort'))).toBe(
+        true,
+      );
+      const text = await readFile(configPath, 'utf8');
+      expect(text).not.toContain(broken.source);
+      const meta = await readMeta(broken.slug, env);
+      expect(meta).toBeNull();
+    } finally {
+      await broken.cleanup();
+    }
+  });
+
+  it('install aborts on a broken path plugin without touching the config or source', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': '{ not json' });
+    try {
+      const before = await readFile(configPath, 'utf8');
+      const exitCode = await cmdInstall(argsOf('install', [plugin.root], ['--yes']));
+      expect(exitCode).toBe(1);
+      expect(await readFile(configPath, 'utf8')).toBe(before);
+      expect((await stat(plugin.root)).isDirectory()).toBe(true);
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('install creates the config file when none exists (§5.11)', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const fresh = await tempDir('oap-cli-fresh-');
+    try {
+      const freshPath = join(fresh.root, 'opencode.json');
+      const exitCode = await cmdInstall(
+        argsOf('install', [plugin.root], ['--yes', '--config', freshPath]),
+      );
+      expect(exitCode).toBe(0);
+      const text = await readFile(freshPath, 'utf8');
+      expect(text).toContain(plugin.root);
+    } finally {
+      await plugin.cleanup();
+      await fresh.cleanup();
+    }
+  });
+
   it('list shows the installed plugin', async () => {
     const exitCode = await cmdList();
     expect(exitCode).toBe(0);
@@ -154,6 +239,11 @@ describe('CLI lifecycle', () => {
     );
     expect(version.version).toBe('1.1.0');
     expect(await readFile(join(dataDir, 'state.txt'), 'utf8')).toBe('keep me');
+
+    // The design's "updated … Restart OpenCode to pick it up." message (§5.12.3).
+    const logs = vi.mocked(console.log).mock.calls.map((call) => String(call[0]));
+    expect(logs.some((message) => message.includes('Restart OpenCode to pick it up'))).toBe(true);
+    expect(logs.some((message) => message.includes('updated hello 1.1.0 (commit'))).toBe(true);
   });
 
   it('doctor and prune handle the store', async () => {

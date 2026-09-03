@@ -59,6 +59,14 @@ opencode-agent-plugins/
 │   ├── check-runtime-imports.mjs  # build gate: no @opencode-ai runtime imports
 │   └── update-schemas.mjs         # dev-only: verify/re-download vendored schemas
 ├── test/                   # shared test infrastructure (no *.test.ts here)
+├── test-e2e/               # Docker e2e suite (real opencode + testcontainers)
+│   ├── Dockerfile          # pinned opencode + plugin build + fixtures + fake model server
+│   ├── agent-plugins.e2e.test.ts  # hook-mode vs static-mode assertions (§9.1)
+│   ├── fixtures/my-plugin/ # fixture package (skill + stdio MCP server)
+│   ├── bootstrap.mjs       # container entrypoint: fake model + opencode serve
+│   ├── fake-model-server.mjs      # OpenAI-compatible capture endpoint (exported)
+│   └── write-config.mjs    # writes opencode.json per scenario mode
+├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
 └── docs/design.md          # the design document
 ```
 

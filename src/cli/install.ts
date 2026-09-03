@@ -2,6 +2,7 @@
  * `install` command: fetch → validate → preview → confirm → register.
  */
 
+import { rm } from 'node:fs/promises';
 import { applyInstall, prepareInstall } from '../lib/install.js';
 import type { InstallPlan, OpResult } from '../lib/install.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
@@ -33,6 +34,13 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   const plan = prepared.plan;
   printPlan(plan);
 
+  if (plan.validated.fatal) {
+    // §5.12.1: failure at any validation step aborts with nothing changed on
+    // disk — before confirmation, and dropping the throwaway staging dir.
+    await abortStagedPlan(plan);
+    return 1;
+  }
+
   if (boolFlag(args.flags, '--dry-run')) {
     console.log('dry-run: nothing was written.');
     return 0;
@@ -59,6 +67,18 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     );
   }
   return 0;
+}
+
+/**
+ * Removes the throwaway staging dir of an aborted plan (git kind only; path
+ * sources are used in place and must never be deleted).
+ *
+ * @param plan - The prepared plan.
+ */
+async function abortStagedPlan(plan: InstallPlan): Promise<void> {
+  if (plan.kind === 'git') {
+    await rm(plan.root, { recursive: true, force: true });
+  }
 }
 
 /** Prints the install preview (manifest, skills, servers, warnings). */

@@ -150,6 +150,26 @@ describe('agentPlugins plugin', () => {
     expect(config.skills?.paths ?? []).toEqual([]);
   });
 
+  it('does not throw on a malformed ref and continues with other plugins', async () => {
+    const good = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+    });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, {
+        plugins: ['git+https://github.com/org/absent.git#bad ref', good.root],
+      });
+      const config = {} as RuntimeConfig;
+      await expect(hooks.config!(config)).resolves.toBeUndefined();
+      expect(config.skills?.paths).toEqual([`${await realpath(good.root)}/skills`]);
+      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
+      expect(messages.some((m) => m.includes('invalid git ref'))).toBe(true);
+    } finally {
+      await good.cleanup();
+    }
+  });
+
   it('logs an error and still returns hooks when options are invalid', async () => {
     const input = pluginInput();
     const hooks = await agentPlugins(input, {});

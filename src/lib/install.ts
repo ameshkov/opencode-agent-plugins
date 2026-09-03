@@ -9,7 +9,7 @@
  */
 
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { gitAvailable, resolveRemoteCommit, stageTree } from './git.js';
 import {
   applyRegisterSource,
@@ -103,7 +103,8 @@ async function preparePathInstall(
   workspaceDir: string,
   env: Record<string, string | undefined>,
 ): Promise<OpResult> {
-  const root = join(workspaceDir, pathSource);
+  // `resolve` (not `join`) so an absolute source resets the workspace prefix.
+  const root = resolve(workspaceDir, pathSource);
   const exists = await stat(root).catch(() => null);
   if (exists === null || !exists.isDirectory()) {
     return {
@@ -175,40 +176,11 @@ export async function applyInstall(
   plan: InstallPlan,
   options: LifecycleOptions & { noRegister?: boolean },
 ): Promise<OpResult> {
+  if (plan.validated.fatal) {
+    return abortFatalInstall(plan);
+  }
   if (plan.kind === 'git' && plan.slug !== undefined && plan.resolvedCommit !== undefined) {
-    const installed = installedRootFor(plan.slug, options.env);
-    await mkdir(join(installed, '..'), { recursive: true });
-    const already = await stat(installed).catch(() => null);
-    if (already !== null) {
-      await rm(plan.root, { recursive: true, force: true });
-      return {
-        ok: false,
-        failure: failure('install-fail', `store entry already exists: ${plan.slug}`),
-      };
-    }
-    await rename(plan.root, installed);
-    const meta: StoreMeta = {
-      source: plan.raw,
-      url: plan.source!.url,
-      ...(plan.source!.ref === undefined ? {} : { ref: plan.source!.ref }),
-      resolvedCommit: plan.resolvedCommit,
-      manifestVersion: plan.validated.manifest.version,
-      installedAt: new Date().toISOString(),
-    };
-    await writeMeta(plan.slug, meta, options.env);
-    if (!options.noRegister) {
-      const registered = await registerConfig(plan.raw, options);
-      if (!registered.ok) {
-        return registered;
-      }
-    }
-    const manifestVersion = plan.validated.manifest.version
-      ? ` ${plan.validated.manifest.version}`
-      : '';
-    return {
-      ok: true,
-      message: `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`,
-    };
+    return applyGitInstall(plan, plan.slug, plan.resolvedCommit, options);
   }
   if (!options.noRegister) {
     const registered = await registerConfig(plan.raw, options);
@@ -222,14 +194,84 @@ export async function applyInstall(
   };
 }
 
+/**
+ * Aborts a fatally-invalid install with nothing changed on disk (§5.12.1),
+ * mirroring the update path (`swapUpdate`), which refuses the new tree for
+ * the same reason. Git plans hold a throwaway staging dir that is removed;
+ * path sources are used in place, so their root must never be touched.
+ *
+ * @param plan - The prepared plan.
+ * @returns The install failure result.
+ */
+async function abortFatalInstall(plan: InstallPlan): Promise<OpResult> {
+  if (plan.kind === 'git') {
+    await rm(plan.root, { recursive: true, force: true });
+  }
+  return {
+    ok: false,
+    failure: failure('install-fail', 'plugin failed validation; nothing was installed'),
+  };
+}
+
+/**
+ * Applies a git-kind plan: moves the staged tree into the store, writes
+ * metadata, and registers the source in the OpenCode config.
+ *
+ * @param plan - The prepared plan.
+ * @param slug - Store slug (from `prepareInstall`).
+ * @param resolvedCommit - Commit recorded in the metadata.
+ * @param options - Lifecycle options (config scope, env).
+ * @returns The result; on success the message to show the user.
+ */
+async function applyGitInstall(
+  plan: InstallPlan,
+  slug: string,
+  resolvedCommit: string,
+  options: LifecycleOptions & { noRegister?: boolean },
+): Promise<OpResult> {
+  const installed = installedRootFor(slug, options.env);
+  await mkdir(join(installed, '..'), { recursive: true });
+  const already = await stat(installed).catch(() => null);
+  if (already !== null) {
+    await rm(plan.root, { recursive: true, force: true });
+    return {
+      ok: false,
+      failure: failure('install-fail', `store entry already exists: ${slug}`),
+    };
+  }
+  await rename(plan.root, installed);
+  const meta: StoreMeta = {
+    source: plan.raw,
+    url: plan.source!.url,
+    ...(plan.source!.ref === undefined ? {} : { ref: plan.source!.ref }),
+    resolvedCommit,
+    manifestVersion: plan.validated.manifest.version,
+    installedAt: new Date().toISOString(),
+  };
+  await writeMeta(slug, meta, options.env);
+  if (!options.noRegister) {
+    const registered = await registerConfig(plan.raw, options);
+    if (!registered.ok) {
+      return registered;
+    }
+  }
+  const manifestVersion = plan.validated.manifest.version
+    ? ` ${plan.validated.manifest.version}`
+    : '';
+  return {
+    ok: true,
+    message: `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`,
+  };
+}
+
 /** Registers a source in the resolved OpenCode config. */
 async function registerConfig(source: string, options: LifecycleOptions): Promise<OpResult> {
   try {
     const path = await resolveConfigFile(options.configScope);
-    const previous = await readFile(path, 'utf8').catch(() => '');
-    const edited = applyRegisterSource(previous, source);
-    const { backupPath } = await saveConfig(path, edited, options.env);
-    return { ok: true, backupPath };
+    const previous = await readFile(path, 'utf8').catch(() => null);
+    const edited = applyRegisterSource(previous ?? '', source);
+    const { backupPath } = await saveConfig(path, edited, options.env, previous);
+    return { ok: true, backupPath: backupPath ?? undefined };
   } catch (error) {
     const message = configError(error);
     return { ok: false, failure: failure('config-edit', message) };
@@ -288,10 +330,10 @@ async function removeStoreEntry(
   let backupPath: string | undefined;
   try {
     const path = await resolveConfigFile(options.configScope);
-    const previous = await readFile(path, 'utf8').catch(() => '');
-    const edited = applyRemoveSource(previous, meta.source);
-    const saved = await saveConfig(path, edited, options.env);
-    backupPath = saved.backupPath;
+    const previous = await readFile(path, 'utf8').catch(() => null);
+    const edited = applyRemoveSource(previous ?? '', meta.source);
+    const saved = await saveConfig(path, edited, options.env, previous);
+    backupPath = saved.backupPath ?? undefined;
   } catch (error) {
     return { ok: false, failure: failure('config-edit', configError(error)) };
   }

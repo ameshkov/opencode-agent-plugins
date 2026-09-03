@@ -42,8 +42,29 @@ export async function cmdUpdate(args: ParsedArgs): Promise<number> {
   const statuses = await applyUpdates(args.positionals, scopeOf(args), {
     force: boolFlag(args.flags, '--force'),
   });
-  printStatuses(statuses);
+  for (const status of statuses) {
+    if (status.status === 'update-available') {
+      // Applied in this run: the design's "updated … Restart OpenCode to
+      // pick it up." message (§5.12.3).
+      console.log(`updated ${status.detail ?? status.source}. Restart OpenCode to pick it up.`);
+    } else {
+      printStatusLine(status);
+    }
+  }
   return statuses.some((s) => s.status === 'update-available') ? 0 : 1;
+}
+
+/** Prints one status line to stdout/stderr by severity. */
+function printStatusLine(status: UpdateStatus): void {
+  const source = status.source;
+  const detail = status.detail === undefined ? '' : ` — ${status.detail}`;
+  if (status.status === 'moved-tag') {
+    console.error(`warn:   ${source}: ${status.status}${detail}`);
+  } else if (status.status === 'corrupted' || status.status === 'unreachable') {
+    console.error(`error:  ${source}: ${status.status}${detail}`);
+  } else {
+    console.log(`${source}: ${status.status}${detail}`);
+  }
 }
 
 /** Prints update statuses one per line. */
@@ -53,14 +74,6 @@ function printStatuses(statuses: UpdateStatus[]): void {
     return;
   }
   for (const status of statuses) {
-    const source = status.source;
-    const detail = status.detail === undefined ? '' : ` — ${status.detail}`;
-    if (status.status === 'moved-tag') {
-      console.error(`warn:   ${source}: ${status.status}${detail}`);
-    } else if (status.status === 'corrupted' || status.status === 'unreachable') {
-      console.error(`error:  ${source}: ${status.status}${detail}`);
-    } else {
-      console.log(`${source}: ${status.status}${detail}`);
-    }
+    printStatusLine(status);
   }
 }

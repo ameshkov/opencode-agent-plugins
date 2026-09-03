@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { resolveConfigFile, configSourcesOf, type ConfigScope } from './config-file.js';
 import { dataKeyForPath, storeDir } from './data.js';
 import { listInstalled, removeMeta, type StoreEntry } from './store.js';
-import { parseSource } from './resolve.js';
+import { parseSource, type ParsedSource } from './resolve.js';
 import { loadManifest } from './manifest.js';
 
 /** A single finding of the doctor report. */
@@ -35,6 +35,65 @@ export interface DoctorReport {
   items: DoctorItem[];
 }
 
+/** Classification of one config source for the doctor audit. */
+interface SourceAudit {
+  /** Store slug of a git source (added to `configSlugs`). */
+  slug?: string;
+  /** PLUGIN_DATA key of a resolvable path source (added to `pathKeys`). */
+  dataKey?: string;
+  /** Finding to report (missing path, malformed source). */
+  item?: DoctorItem;
+}
+
+/**
+ * Classifies one config source into a git slug, a path-source data key, or
+ * a finding (malformed source, unresolvable path).
+ */
+async function classifySource(
+  source: string,
+  installedSlugs: Set<string>,
+  env: Record<string, string | undefined>,
+): Promise<SourceAudit> {
+  let parsed: ParsedSource;
+  try {
+    parsed = parseSource(source);
+  } catch (error) {
+    return {
+      item: {
+        kind: 'no-store-entry',
+        id: source,
+        detail: `malformed git source: ${error instanceof Error ? error.message : String(error)}`,
+        referenced: true,
+      },
+    };
+  }
+  if (parsed.kind === 'git') {
+    return {
+      slug: parsed.source.slug,
+      item: installedSlugs.has(parsed.source.slug)
+        ? undefined
+        : {
+            kind: 'no-store-entry',
+            id: source,
+            detail: 'config entry has no store entry; run install',
+            referenced: true,
+          },
+    };
+  }
+  const { hashDataKey } = await dataKeyOfPathSource(source, env);
+  if (hashDataKey !== null) {
+    return { dataKey: hashDataKey };
+  }
+  return {
+    item: {
+      kind: 'no-store-entry',
+      id: source,
+      detail: 'path source not found on disk',
+      referenced: true,
+    },
+  };
+}
+
 /** Audits the config: sources without a store entry, path-source keys. */
 async function auditConfig(
   configScope: ConfigScope,
@@ -50,29 +109,15 @@ async function auditConfig(
     return { configSlugs, pathKeys, items };
   }
   for (const source of configSourcesOf(text)) {
-    const parsed = parseSource(source);
-    if (parsed.kind === 'git') {
-      configSlugs.add(parsed.source.slug);
-      if (!installedSlugs.has(parsed.source.slug)) {
-        items.push({
-          kind: 'no-store-entry',
-          id: source,
-          detail: 'config entry has no store entry; run install',
-          referenced: true,
-        });
-      }
-      continue;
+    const audit = await classifySource(source, installedSlugs, env);
+    if (audit.slug !== undefined) {
+      configSlugs.add(audit.slug);
     }
-    const { hashDataKey } = await dataKeyOfPathSource(source, env);
-    if (hashDataKey !== null) {
-      pathKeys.add(hashDataKey);
-    } else {
-      items.push({
-        kind: 'no-store-entry',
-        id: source,
-        detail: 'path source not found on disk',
-        referenced: true,
-      });
+    if (audit.dataKey !== undefined) {
+      pathKeys.add(audit.dataKey);
+    }
+    if (audit.item !== undefined) {
+      items.push(audit.item);
     }
   }
   return { configSlugs, pathKeys, items };

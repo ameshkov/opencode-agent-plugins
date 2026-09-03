@@ -72,7 +72,11 @@ export async function resolveConfigFile(scope: ConfigScope): Promise<string> {
  * @throws {ConfigEditError} When the config structure cannot be edited safely.
  */
 export function applyRegisterSource(text: string, source: string): string {
-  const root = parseTree(text);
+  // A missing or empty config file is treated as an empty object: the design
+  // creates the config file when none exists (§5.11). Whitespace-only content
+  // is not valid JSONC, so normalize it to `{}` as well.
+  const sourceText = text.trim() === '' ? '{}' : text;
+  const root = parseTree(sourceText);
   if (root === undefined) {
     throw new ConfigEditError('config is not a valid JSONC document');
   }
@@ -81,11 +85,11 @@ export function applyRegisterSource(text: string, source: string): string {
   if (tupleIndex === -1) {
     const entry = [PLUGIN_TUPLE_NAME, { plugins: [source] }];
     if (plugin === undefined || plugin.children === undefined) {
-      return applyEdits(text, modify(text, ['plugin'], [entry], {}));
+      return applyEdits(sourceText, modify(sourceText, ['plugin'], [entry], {}));
     }
     return applyEdits(
-      text,
-      modify(text, ['plugin', plugin.children.length], entry, {
+      sourceText,
+      modify(sourceText, ['plugin', plugin.children.length], entry, {
         isArrayInsertion: true,
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       }),
@@ -94,7 +98,7 @@ export function applyRegisterSource(text: string, source: string): string {
   const tuple = plugin!.children![tupleIndex]!;
   const options = tupleChildren(tuple)[1];
   const existing = isObject(options)
-    ? (JSON.parse(sliceOf(text, options)) as Record<string, unknown>)
+    ? (JSON.parse(sliceOf(sourceText, options)) as Record<string, unknown>)
     : {};
   const plugins = Array.isArray(existing['plugins']) ? existing['plugins'] : [];
   const strings = plugins.filter((p): p is string => typeof p === 'string');
@@ -103,7 +107,7 @@ export function applyRegisterSource(text: string, source: string): string {
   }
   const next: Record<string, unknown> = { ...existing, plugins: [...strings, source] };
   const newTuple = [PLUGIN_TUPLE_NAME, next];
-  return applyEdits(text, modify(text, ['plugin', tupleIndex], newTuple, {})) as string;
+  return applyEdits(sourceText, modify(sourceText, ['plugin', tupleIndex], newTuple, {})) as string;
 }
 
 /**
@@ -154,26 +158,45 @@ export function applyRemoveSource(text: string, source: string): string {
  * The edited text must parse as JSONC (a CLI must never leave OpenCode with a
  * corrupt config); the previous content is backed up to the store's
  * `backups/` dir with a timestamped name, then the file is replaced via
- * temp + rename.
+ * temp + rename. A missing parent directory is created, so installing into a
+ * config that does not exist yet works (the design creates `opencode.json`).
+ *
+ * Abort-on-conflict: when `expected` is given, it must match the content
+ * read earlier by the caller; if the file changed between the read and the
+ * write, nothing is written (the caller's edit would clobber user changes).
  *
  * @param path - Absolute config file path.
  * @param newText - The edited config text.
  * @param env - Environment view for store-root resolution.
- * @returns The path of the written backup.
- * @throws {ConfigEditError} When the edit does not parse as JSONC.
+ * @param expected - The config content previously read by the caller
+ * (null when the file did not exist); omit to skip the conflict check.
+ * @returns The path of the written backup (null when there was nothing to
+ * back up, i.e. the file was created by this call).
+ * @throws {ConfigEditError} When the edit does not parse as JSONC or the file
+ * changed on disk since the caller read it.
  */
 export async function saveConfig(
   path: string,
   newText: string,
   env = process.env,
-): Promise<{ backupPath: string }> {
+  expected?: string | null,
+): Promise<{ backupPath: string | null }> {
   if (parseTree(newText) === undefined) {
     throw new ConfigEditError('refusing to write config: result does not parse');
   }
   const previous = await readFile(path, 'utf8').catch(() => null);
-  const backupPath = join(storeDir('backups', env), `${basename(path)}-${timestamp()}.bak`);
-  await mkdir(dirname(backupPath), { recursive: true });
-  await writeFile(backupPath, previous ?? newText, 'utf8');
+  if (expected !== undefined && previous !== expected) {
+    throw new ConfigEditError(
+      'config file changed on disk since it was read; aborting (nothing written)',
+    );
+  }
+  let backupPath: string | null = null;
+  if (previous !== null) {
+    backupPath = join(storeDir('backups', env), `${basename(path)}-${timestamp()}.bak`);
+    await mkdir(dirname(backupPath), { recursive: true });
+    await writeFile(backupPath, previous, 'utf8');
+  }
+  await mkdir(dirname(path), { recursive: true });
   await writeFileAtomic(path, newText);
   return { backupPath };
 }

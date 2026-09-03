@@ -102,6 +102,15 @@ describe('resolveSource', () => {
     }
   });
 
+  it('reports a malformed ref as a failure instead of throwing', async () => {
+    const result = await resolveSource('git+https://github.com/org/repo.git#bad ref', '/');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.kind).toBe('source-missing');
+      expect(result.failure.message).toContain('invalid git ref');
+    }
+  });
+
   it('rejects ~user/... forms', async () => {
     const result = await resolveSource('~nobody/plugin', '/');
     expect(result.ok).toBe(false);

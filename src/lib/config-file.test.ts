@@ -1,3 +1,5 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parse } from 'jsonc-parser';
 import { describe, expect, it } from 'vitest';
 import {
@@ -6,7 +8,9 @@ import {
   configSourcesOf,
   ConfigEditError,
   PLUGIN_TUPLE_NAME,
+  saveConfig,
 } from './config-file.js';
+import { storeEnv, tempDir } from '../../test/helpers.js';
 
 const WITH_COMMENTS = `{
   // user comments must survive
@@ -36,6 +40,17 @@ describe('applyRegisterSource', () => {
     expect(sources).toEqual(['./agent-plugins/my-plugin']);
     // Valid JSONC after the edit.
     expect(() => JSON.parse(edited)).not.toThrow();
+  });
+
+  it('creates a config from an empty file (§5.11)', () => {
+    const edited = applyRegisterSource('', './agent-plugins/my-plugin');
+    expect(() => JSON.parse(edited)).not.toThrow();
+    expect(configSourcesOf(edited)).toEqual(['./agent-plugins/my-plugin']);
+  });
+
+  it('treats whitespace-only content as an empty config', () => {
+    const edited = applyRegisterSource('   \n\t ', './agent-plugins/my-plugin');
+    expect(configSourcesOf(edited)).toEqual(['./agent-plugins/my-plugin']);
   });
 
   it('appends to an existing tuple preserving other options', () => {
@@ -82,5 +97,73 @@ describe('configSourcesOf', () => {
     // Plain string entries are plugin names, not sources.
     expect(sources).toEqual(['./agent-plugins/x']);
     expect(configSourcesOf('{"plugin": ["plain"]}')).toEqual([]);
+  });
+});
+
+describe('saveConfig', () => {
+  it('creates the config file and its parent directory when missing', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    const store = await tempDir('oap-cfg-store-');
+    try {
+      const path = join(home.root, 'nested', 'opencode.json');
+      const saved = await saveConfig(path, '{"plugin": []}', storeEnv(store.root));
+      expect(saved.backupPath).toBeNull();
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ plugin: [] });
+    } finally {
+      await home.cleanup();
+      await store.cleanup();
+    }
+  });
+
+  it('backs up the previous content with a timestamped name', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    const store = await tempDir('oap-cfg-store-');
+    try {
+      const path = join(home.root, 'opencode.json');
+      await writeFile(path, '{"theme":"dark"}', 'utf8');
+      const saved = await saveConfig(
+        path,
+        '{"plugin": []}',
+        storeEnv(store.root),
+        '{"theme":"dark"}',
+      );
+      expect(saved.backupPath).not.toBeNull();
+      expect(await readFile(saved.backupPath!, 'utf8')).toBe('{"theme":"dark"}');
+    } finally {
+      await home.cleanup();
+      await store.cleanup();
+    }
+  });
+
+  it('aborts when the config changed since the caller read it', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    const store = await tempDir('oap-cfg-store-');
+    try {
+      const path = join(home.root, 'opencode.json');
+      await writeFile(path, '{"a":1}', 'utf8');
+      await expect(
+        saveConfig(path, '{"plugin": []}', storeEnv(store.root), '{"a":2}'),
+      ).rejects.toThrow(ConfigEditError);
+      // Nothing written: the on-disk content is untouched.
+      expect(await readFile(path, 'utf8')).toBe('{"a":1}');
+    } finally {
+      await home.cleanup();
+      await store.cleanup();
+    }
+  });
+
+  it('aborts when an expected-missing config appeared meanwhile', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    const store = await tempDir('oap-cfg-store-');
+    try {
+      const path = join(home.root, 'opencode.json');
+      await writeFile(path, '{"a":1}', 'utf8');
+      await expect(saveConfig(path, '{"plugin": []}', storeEnv(store.root), null)).rejects.toThrow(
+        ConfigEditError,
+      );
+    } finally {
+      await home.cleanup();
+      await store.cleanup();
+    }
   });
 });

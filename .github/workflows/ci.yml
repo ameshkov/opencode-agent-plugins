@@ -67,6 +67,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Containerized e2e suite: a real opencode (pinned via OPENCODE_VERSION)
+  # runs inside a testcontainers-managed container with a fake model server;
+  # the test asserts the config-hook registration reaches the model request.
+  # Docker is available on the ubuntu runners by default.
+  e2e:
+    name: E2E (opencode ${{ env.OPENCODE_VERSION }})
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run e2e tests (testcontainers)
+        run: pnpm test:e2e
+        env:
+          OPENCODE_VERSION: ${{ env.OPENCODE_VERSION }}
+
   # Publishes to npm (tokenless via OIDC Trusted Publishers) and creates a
   # GitHub release. Only runs on version tags after all CI gates pass.
   #

@@ -64,14 +64,29 @@ export async function registerAgentPlugins(
   let localCount = 0;
   let remoteCount = 0;
   for (const source of parsed.options.plugins) {
-    const outcome = await registerConfiguredSource(
-      config,
-      source,
-      parsed.options.prefix,
-      state,
-      logger,
-      input.directory,
-    );
+    let outcome: PluginOutcome;
+    try {
+      outcome = await registerConfiguredSource(
+        config,
+        source,
+        parsed.options.prefix,
+        state,
+        logger,
+        input.directory,
+      );
+    } catch (error) {
+      // Defense in depth: every per-plugin failure is isolated (§5.1). A
+      // thrown error must never abort the remaining plugins.
+      const message = error instanceof Error ? error.message : String(error);
+      await report(
+        failure('source-missing', `unexpected error for source "${source}": ${message}`, {
+          source,
+        }),
+        logger,
+        { source },
+      );
+      outcome = { skills: 0, local: 0, remote: 0 };
+    }
     skillCount += outcome.skills;
     localCount += outcome.local;
     remoteCount += outcome.remote;

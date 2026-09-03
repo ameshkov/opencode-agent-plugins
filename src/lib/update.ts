@@ -22,7 +22,7 @@ import {
   type StoreEntry,
   type StoreMeta,
 } from './store.js';
-import { parseSource } from './resolve.js';
+import { parseSource, type ParsedSource } from './resolve.js';
 import { validatePluginTree } from './validate.js';
 
 /** Outcome of one plugin in a `check` / `update` run. */
@@ -131,7 +131,14 @@ async function pathSourceStatuses(
   }
   const out: UpdateStatus[] = [];
   for (const source of configSourcesOf(text)) {
-    if (parseSource(source).kind !== 'path') {
+    let parsed: ParsedSource;
+    try {
+      parsed = parseSource(source);
+    } catch {
+      // Malformed sources are surfaced by `doctor`; they are not path sources.
+      continue;
+    }
+    if (parsed.kind !== 'path') {
       continue;
     }
     if (names.length > 0 && !names.includes(source)) {
@@ -244,7 +251,15 @@ async function swapUpdate(
     },
     env,
   );
-  return statusFor(slug, meta, 'update-available', `updated to ${short(newCommit)}`);
+  // The detail carries the design's "updated <name> to <version> (commit …)"
+  // message payload; the CLI appends the restart note (§5.12.3).
+  const version = validated.manifest.version === undefined ? '' : ` ${validated.manifest.version}`;
+  return statusFor(
+    slug,
+    meta,
+    'update-available',
+    `${validated.manifest.name}${version} (commit ${short(newCommit)})`,
+  );
 }
 
 /** Builds a status record from metadata. */

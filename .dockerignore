@@ -1,5 +1,5 @@
-# Build artifacts (rebuilt inside the image)
-build/
+# `build/` is intentionally NOT excluded: the e2e image embeds the compiled
+# plugin (the main Dockerfile rebuilds it anyway).
 dist/
 
 # CI / editor / git tooling

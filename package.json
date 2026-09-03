@@ -46,6 +46,7 @@
     "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "vitest run --config vitest.test-e2e.config.ts",
     "clean": "rm -rf node_modules build",
     "format:check": "prettier --check --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 '**/*.md'",
     "format:fix": "prettier --write --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 --fix '**/*.md'",
@@ -68,6 +69,7 @@
     "markdownlint-cli2": "0.23.2",
     "oxlint": "1.80.0",
     "prettier": "3.9.6",
+    "testcontainers": "12.1.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }
