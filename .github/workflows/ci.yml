@@ -72,7 +72,10 @@ jobs:
   # the test asserts the config-hook registration reaches the model request.
   # Docker is available on the ubuntu runners by default.
   e2e:
-    name: E2E (opencode ${{ env.OPENCODE_VERSION }})
+    # The `env` context is not available in job names; the version under
+    # test is still pinned in the workflow-level `env` above (and printed by
+    # the test itself).
+    name: E2E (Docker, opencode)
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
