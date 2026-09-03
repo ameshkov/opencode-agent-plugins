@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mismatch",
+  "version": "1.0.0",
+  "description": "E2E fixture with an unsupported mcp.json $schema version.",
+  "author": { "name": "E2E" },
+  "license": "MIT"
+}

@@ -4,3 +4,6 @@ build/
 .opencode/
 pnpm-lock.yaml
 *.md
+# E2E fixture that must stay an INVALID JSON document (the broken-manifest
+# scenario): prettier cannot parse it by design.
+test-e2e/fixtures/broken-plugin/plugin.json

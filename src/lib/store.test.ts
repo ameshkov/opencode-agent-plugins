@@ -48,6 +48,24 @@ describe('store metadata', () => {
       await home.cleanup();
     }
   });
+
+  it('ignores .old-* swap leftovers when listing', async () => {
+    const home = await tempDir('oap-store-');
+    try {
+      const env = storeEnv(home.root);
+      const root = installedRootFor('org-hello', env);
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
+      await writeMeta('org-hello', META, env);
+      // A stray swap leftover (crashed update, §5.12.3) must not look like
+      // a corrupted store entry to listInstalled/doctor.
+      await mkdir(join(storeDir('installed', env), '.old-org-hello'), { recursive: true });
+
+      expect((await listInstalled(env)).map((e) => e.slug)).toEqual(['org-hello']);
+    } finally {
+      await home.cleanup();
+    }
+  });
 });
 
 describe('findStoreEntry', () => {

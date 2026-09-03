@@ -3,7 +3,12 @@
   "mcpServers": {
     "echo": {
       "type": "stdio",
-      "command": "./bin/serve.js"
+      "command": "./bin/serve.js",
+      "args": ["--placeholder-root", "${PLUGIN_ROOT}", "--placeholder-data", "${PLUGIN_DATA}"],
+      "env": {
+        "E2E_ROOT": "${PLUGIN_ROOT}",
+        "E2E_DATA": "${PLUGIN_DATA}"
+      }
     }
   }
 }

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "remotep",
+  "version": "1.0.0",
+  "description": "E2E remote-MCP fixture plugin: streamable-http, PATH-stdio, and invalid entries.",
+  "author": { "name": "E2E" },
+  "license": "MIT"
+}

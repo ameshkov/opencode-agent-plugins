@@ -60,12 +60,21 @@ opencode-agent-plugins/
 │   └── update-schemas.mjs         # dev-only: verify/re-download vendored schemas
 ├── test/                   # shared test infrastructure (no *.test.ts here)
 ├── test-e2e/               # Docker e2e suite (real opencode + testcontainers)
-│   ├── Dockerfile          # pinned opencode + plugin build + fixtures + fake model server
+│   ├── global-setup.ts     # vitest globalSetup: docker check + image build (once per run)
+│   ├── helpers/            # shared scenario driver, capture parsing, exec helpers
 │   ├── agent-plugins.e2e.test.ts  # hook-mode vs static-mode assertions (§9.1)
-│   ├── fixtures/my-plugin/ # fixture package (skill + stdio MCP server)
-│   ├── bootstrap.mjs       # container entrypoint: fake model + opencode serve
+│   ├── remote-mcp.e2e.test.ts     # streamable-http, headers, redirects, PATH (§7)
+│   ├── cli-ops.e2e.test.ts        # CLI lifecycle, no opencode boot (cheap scenarios)
+│   ├── cli-session.e2e.test.ts    # CLI install/update/remove against real opencode
+│   ├── negative-behavior.e2e.test.ts  # §6 taxonomy anchors (invalid manifest, mismatch, stub)
+│   ├── Dockerfile          # pinned opencode + plugin build + fixtures + fake model server
+│   ├── bootstrap.mjs       # container entrypoint: fake model + opencode serve per mode
+│   ├── write-config.mjs    # writes opencode.json per scenario mode
+│   ├── git-fixture.mjs     # in-container git remote fixture manager (CLI scenarios)
 │   ├── fake-model-server.mjs      # OpenAI-compatible capture endpoint (exported)
-│   └── write-config.mjs    # writes opencode.json per scenario mode
+│   ├── path-bin/           # bare-command (PATH-resolved) MCP tool fixture
+│   └── fixtures/           # my-plugin (stdio+placeholders), remote-plugin,
+│                           # git-plugin, broken-plugin, mismatch-plugin
 ├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
 └── docs/design.md          # the design document
 ```

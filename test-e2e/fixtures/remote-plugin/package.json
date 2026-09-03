@@ -1,0 +1,9 @@
+{
+  "name": "e2e-remote-fixture-plugin",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.5.4"
+  }
+}

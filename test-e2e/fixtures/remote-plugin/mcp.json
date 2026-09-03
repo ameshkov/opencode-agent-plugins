@@ -1,0 +1,32 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "http": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:3999/mcp",
+      "headers": {
+        "x-e2e-token": "e2e-token",
+        "user-agent": "plugin-ua"
+      }
+    },
+    "redirect": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:3999/redirect",
+      "headers": {
+        "x-redirect-token": "red-token"
+      }
+    },
+    "pathtool": {
+      "type": "stdio",
+      "command": "e2e-path-tool"
+    },
+    "sse": {
+      "type": "sse",
+      "url": "http://127.0.0.1:3999/sse"
+    },
+    "badurl": {
+      "type": "streamable-http",
+      "url": "http://example.com/mcp"
+    }
+  }
+}

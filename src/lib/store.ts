@@ -99,7 +99,9 @@ export async function removeMeta(slug: string, env: EnvLike = process.env): Prom
  * Lists every installed store entry.
  *
  * Slugs without a readable metadata file are included with `meta: null`
- * (the `doctor` command reports them as corrupted).
+ * (the `doctor` command reports them as corrupted). `.old-*` directories are
+ * swap leftovers from crashed updates (§5.12.3), not store entries — they
+ * are reported by `doctor`'s stale-leftover audit instead.
  *
  * @param env - Environment view for store-root resolution.
  * @returns Installed entries, ordered by slug.
@@ -109,6 +111,9 @@ export async function listInstalled(env: EnvLike = process.env): Promise<StoreEn
   const entries = await readdir(dir).catch(() => [] as string[]);
   const out: StoreEntry[] = [];
   for (const slug of entries) {
+    if (slug.startsWith('.old-')) {
+      continue;
+    }
     const root = join(dir, slug);
     const meta = await readMeta(slug, env);
     out.push({ slug, root, meta });
