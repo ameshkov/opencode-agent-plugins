@@ -21,6 +21,8 @@
  * - `negative-invalid`  my-plugin + a plugin with an unparsable manifest.
  * - `negative-mismatch` mcp.json `$schema` version mismatch fixture.
  * - `negative-stub`   my-plugin + a user-authored `mcp.echo` stub.
+ * - `skill-collision` my-plugin + a user-authored `skills.paths` entry whose
+ *                     `hello` skill collides with the plugin's.
  * - `cli`             `opencode-agent-plugins` tuple, empty `plugins` (the
  *                     CLI then registers sources into it).
  * - `cli-missing`     tuple pre-seeded with a git source that is NOT
@@ -107,6 +109,14 @@ export async function writeConfig(mode) {
       base['mcp'] = {
         echo: { type: 'local', command: ['/bin/true'], enabled: false },
       };
+      break;
+    case 'skill-collision':
+      // The user authored a `skills.paths` entry providing a `hello` skill;
+      // the plugin's `hello` skill of the same name must be skipped, user
+      // config wins (§3.2, §5.6). The plugin's `skills/` dir must NOT be
+      // added to `config.skills.paths`.
+      base['plugin'] = pathPlugin(['/app/fixtures/my-plugin']);
+      base['skills'] = { paths: ['/app/fixtures/user-skills'] };
       break;
     case 'cli':
       base['plugin'] = [['opencode-agent-plugins', { plugins: [] }]];

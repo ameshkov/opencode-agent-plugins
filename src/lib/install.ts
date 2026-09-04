@@ -14,6 +14,7 @@ import { gitAvailable, resolveRemoteCommit, stageTree } from './git.js';
 import {
   applyRegisterSource,
   applyRemoveSource,
+  configPreferenceNote,
   ConfigEditError,
   resolveConfigFile,
   saveConfig,
@@ -61,7 +62,7 @@ export interface InstallPlan {
 
 /** Result of preparation/application. */
 export type OpResult =
-  | { ok: true; plan?: InstallPlan; message?: string; backupPath?: string }
+  | { ok: true; plan?: InstallPlan; message?: string; backupPath?: string; configNote?: string }
   | { ok: false; failure: Failure; detail?: string };
 
 /**
@@ -182,15 +183,18 @@ export async function applyInstall(
   if (plan.kind === 'git' && plan.slug !== undefined && plan.resolvedCommit !== undefined) {
     return applyGitInstall(plan, plan.slug, plan.resolvedCommit, options);
   }
+  let configNote: string | undefined;
   if (!options.noRegister) {
     const registered = await registerConfig(plan.raw, options);
     if (!registered.ok) {
       return registered;
     }
+    configNote = registered.configNote;
   }
   return {
     ok: true,
     message: `registered ${plan.raw} (local path). Restart OpenCode to use it.`,
+    ...(configNote === undefined ? {} : { configNote }),
   };
 }
 
@@ -249,11 +253,13 @@ async function applyGitInstall(
     installedAt: new Date().toISOString(),
   };
   await writeMeta(slug, meta, options.env);
+  let configNote: string | undefined;
   if (!options.noRegister) {
     const registered = await registerConfig(plan.raw, options);
     if (!registered.ok) {
       return registered;
     }
+    configNote = registered.configNote;
   }
   const manifestVersion = plan.validated.manifest.version
     ? ` ${plan.validated.manifest.version}`
@@ -261,17 +267,23 @@ async function applyGitInstall(
   return {
     ok: true,
     message: `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`,
+    ...(configNote === undefined ? {} : { configNote }),
   };
 }
 
 /** Registers a source in the resolved OpenCode config. */
 async function registerConfig(source: string, options: LifecycleOptions): Promise<OpResult> {
   try {
-    const path = await resolveConfigFile(options.configScope);
-    const previous = await readFile(path, 'utf8').catch(() => null);
+    const resolved = await resolveConfigFile(options.configScope);
+    const previous = await readFile(resolved.path, 'utf8').catch(() => null);
     const edited = applyRegisterSource(previous ?? '', source);
-    const { backupPath } = await saveConfig(path, edited, options.env, previous);
-    return { ok: true, backupPath: backupPath ?? undefined };
+    const { backupPath } = await saveConfig(resolved.path, edited, options.env, previous);
+    const note = configPreferenceNote(resolved);
+    return {
+      ok: true,
+      backupPath: backupPath ?? undefined,
+      ...(note === null ? {} : { configNote: note }),
+    };
   } catch (error) {
     const message = configError(error);
     return { ok: false, failure: failure('config-edit', message) };
@@ -328,12 +340,14 @@ async function removeStoreEntry(
     };
   }
   let backupPath: string | undefined;
+  let configNote: string | undefined;
   try {
-    const path = await resolveConfigFile(options.configScope);
-    const previous = await readFile(path, 'utf8').catch(() => null);
+    const resolved = await resolveConfigFile(options.configScope);
+    const previous = await readFile(resolved.path, 'utf8').catch(() => null);
     const edited = applyRemoveSource(previous ?? '', meta.source);
-    const saved = await saveConfig(path, edited, options.env, previous);
+    const saved = await saveConfig(resolved.path, edited, options.env, previous);
     backupPath = saved.backupPath ?? undefined;
+    configNote = configPreferenceNote(resolved) ?? undefined;
   } catch (error) {
     return { ok: false, failure: failure('config-edit', configError(error)) };
   }
@@ -346,6 +360,7 @@ async function removeStoreEntry(
     ok: true,
     message: `removed ${meta.source}. Restart OpenCode to drop its tools and skills.`,
     backupPath,
+    ...(configNote === undefined ? {} : { configNote }),
   };
 }
 

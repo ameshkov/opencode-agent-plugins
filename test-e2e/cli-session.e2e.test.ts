@@ -76,6 +76,9 @@ describe(`e2e cli session: real opencode ${OPENCODE_VERSION} in Docker`, () => {
         const listed = await scenario.cli(['list']);
         expect(listed.output).toContain('gitplug');
         expect(listed.output).toContain('file:///app/git-fixtures/remote.git');
+        // §5.11: the status column classifies the ref like `check` — the
+        // just-installed (up to date) HEAD-sourced plugin reads "current".
+        expect(listed.output).toContain('  current');
 
         // Restart the SAME container: the next start loads the installed
         // plugin from the store and the tool reaches the session.
@@ -113,6 +116,8 @@ describe(`e2e cli session: real opencode ${OPENCODE_VERSION} in Docker`, () => {
 
         // Drift + update while opencode runs (update touches only the store).
         await pushVersion(scenario, '1.1.0');
+        const drifting = await scenario.cli(['list']);
+        expect(drifting.output).toContain('update available');
         await cliOk(scenario, ['update', '--yes']);
 
         await scenario.restart();

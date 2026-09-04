@@ -65,14 +65,33 @@ export async function runCheck(
   configScope: ConfigScope,
   env: Record<string, string | undefined> = process.env,
 ): Promise<UpdateStatus[]> {
+  const statuses = (await checkStoreStatuses(env)).filter(
+    (status) => names.length === 0 || names.includes(status.slug),
+  );
+  statuses.push(...(await pathSourceStatuses(configScope, names)));
+  return statuses;
+}
+
+/**
+ * Computes the update status of every installed store entry (read-only,
+ * network-only for non-SHA refs).
+ *
+ * This is the shared engine behind `check` and `list` (§5.11/§5.12.3):
+ * `check` additionally reports path-sourced plugins, `list` renders the
+ * same statuses as its status column. Without `git`/network the recorded
+ * ref cannot be resolved and the entry is reported as `unreachable` — the
+ * command still completes.
+ *
+ * @param env - Environment view for store-root resolution.
+ * @returns One status record per store entry.
+ */
+export async function checkStoreStatuses(
+  env: Record<string, string | undefined> = process.env,
+): Promise<UpdateStatus[]> {
   const statuses: UpdateStatus[] = [];
   for (const entry of await listInstalled(env)) {
-    if (names.length > 0 && !selectedEntry(entry, names)) {
-      continue;
-    }
     statuses.push(await checkEntry(entry));
   }
-  statuses.push(...(await pathSourceStatuses(configScope, names)));
   return statuses;
 }
 
@@ -124,8 +143,8 @@ async function pathSourceStatuses(
   configScope: ConfigScope,
   names: string[],
 ): Promise<UpdateStatus[]> {
-  const path = await resolveConfigFile(configScope);
-  const text = await readFile(path, 'utf8').catch(() => null);
+  const resolvedPath = await resolveConfigFile(configScope);
+  const text = await readFile(resolvedPath.path, 'utf8').catch(() => null);
   if (text === null) {
     return [];
   }

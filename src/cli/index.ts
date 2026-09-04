@@ -41,8 +41,8 @@ Commands:
   update [<name>...] [--yes] [--force]
       Applies available updates (staging -> validate -> atomic swap).
   list
-      Shows installed plugins: source kind, URL/ref, resolved commit,
-      manifest version, status.
+      Shows installed plugins: source, URL/ref, resolved commit, manifest
+      version, and status (current / update available / pinned).
   doctor
       Read-only health report of store/config drift.
   prune [--yes]

@@ -6,6 +6,7 @@ import { rm } from 'node:fs/promises';
 import { applyInstall, prepareInstall } from '../lib/install.js';
 import type { InstallPlan, OpResult } from '../lib/install.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
+import { printConfigNote } from './output.js';
 import { confirm } from './prompts.js';
 
 /**
@@ -60,6 +61,7 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     return printFailure(result);
   }
   console.log(result.message ?? 'installed.');
+  printConfigNote(result);
   if (boolFlag(args.flags, '--no-register') && plan.kind === 'git') {
     console.log(
       `\nAdd this to your opencode config's "plugin" array:\n` +

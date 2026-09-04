@@ -1,16 +1,26 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'jsonc-parser';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyRegisterSource,
   applyRemoveSource,
+  configPreferenceNote,
   configSourcesOf,
   ConfigEditError,
   PLUGIN_TUPLE_NAME,
+  resolveConfigFile,
   saveConfig,
 } from './config-file.js';
 import { storeEnv, tempDir } from '../../test/helpers.js';
+
+/** Controlled `homedir()` for the global-scope tests (§5.11). */
+const { mockHomedir } = vi.hoisted(() => ({ mockHomedir: { value: '' } }));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => mockHomedir.value };
+});
 
 const WITH_COMMENTS = `{
   // user comments must survive
@@ -97,6 +107,70 @@ describe('configSourcesOf', () => {
     // Plain string entries are plugin names, not sources.
     expect(sources).toEqual(['./agent-plugins/x']);
     expect(configSourcesOf('{"plugin": ["plain"]}')).toEqual([]);
+  });
+});
+
+describe('resolveConfigFile', () => {
+  it('prefers opencode.jsonc when both exist in the project scope (§5.11)', async () => {
+    const dir = await tempDir('oap-cfg-scope-');
+    try {
+      await writeFile(join(dir.root, 'opencode.json'), '{}', 'utf8');
+      await writeFile(join(dir.root, 'opencode.jsonc'), '{}', 'utf8');
+      const resolved = await resolveConfigFile({ kind: 'project', cwd: dir.root });
+      expect(resolved.path).toBe(join(dir.root, 'opencode.jsonc'));
+      expect(resolved.jsoncWins).toBe(true);
+      expect(configPreferenceNote(resolved)).toContain('opencode.jsonc wins over opencode.json');
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('uses opencode.jsonc when it is the only config file', async () => {
+    const dir = await tempDir('oap-cfg-scope-');
+    try {
+      await writeFile(join(dir.root, 'opencode.jsonc'), '{}', 'utf8');
+      const resolved = await resolveConfigFile({ kind: 'project', cwd: dir.root });
+      expect(resolved.path).toBe(join(dir.root, 'opencode.jsonc'));
+      expect(resolved.jsoncWins).toBe(false);
+      expect(configPreferenceNote(resolved)).toBeNull();
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('falls back to opencode.json when no config file exists', async () => {
+    const dir = await tempDir('oap-cfg-scope-');
+    try {
+      const resolved = await resolveConfigFile({ kind: 'project', cwd: dir.root });
+      expect(resolved.path).toBe(join(dir.root, 'opencode.json'));
+      expect(resolved.jsoncWins).toBe(false);
+      expect(configPreferenceNote(resolved)).toBeNull();
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('prefers opencode.jsonc in the global scope too (§5.11)', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    try {
+      const globalDir = join(home.root, '.config', 'opencode');
+      await mkdir(globalDir, { recursive: true });
+      await writeFile(join(globalDir, 'opencode.json'), '{}', 'utf8');
+      await writeFile(join(globalDir, 'opencode.jsonc'), '{}', 'utf8');
+      mockHomedir.value = home.root;
+      const resolved = await resolveConfigFile({ kind: 'global' });
+      expect(resolved.path).toBe(join(globalDir, 'opencode.jsonc'));
+      expect(resolved.jsoncWins).toBe(true);
+    } finally {
+      mockHomedir.value = '';
+      await home.cleanup();
+    }
+  });
+
+  it('returns a custom path verbatim', async () => {
+    const resolved = await resolveConfigFile({ kind: 'custom', path: '/tmp/opencode.json' });
+    expect(resolved.path).toBe('/tmp/opencode.json');
+    expect(resolved.jsoncWins).toBe(false);
   });
 });
 

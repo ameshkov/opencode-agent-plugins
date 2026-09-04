@@ -8,6 +8,8 @@
  * the classification asserted by tests is identical in both surfaces.
  */
 
+import type { Logger } from '../utils/index.js';
+
 /** Severity of a failure report, matching the logger levels. */
 type FailureLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -26,6 +28,7 @@ export type FailureKind =
   | 'path-escape' // package path escapes the plugin root
   | 'skills-missing' // skills/ absent: valid absence
   | 'skills-invalid' // invalid skill: skip that skill
+  | 'skills-collision' // skill name collides with an existing skills.paths entry
   | 'skills-nested' // SKILL.md deeper than skills/<name>/: warn
   | 'mcp-missing' // mcp.json absent: valid absence
   | 'mcp-invalid' // mcp.json invalid: disable MCP only
@@ -63,6 +66,7 @@ const FAILURE_LEVEL: Record<FailureKind, FailureLevel> = {
   'path-escape': 'warn',
   'skills-missing': 'debug',
   'skills-invalid': 'warn',
+  'skills-collision': 'warn',
   'skills-nested': 'warn',
   'mcp-missing': 'debug',
   'mcp-invalid': 'error',
@@ -101,4 +105,36 @@ export function failure(
 /** @internal Exported for tests only; not part of the public module API. */
 export function levelOf(kind: FailureKind): FailureLevel {
   return FAILURE_LEVEL[kind];
+}
+
+/**
+ * Reports a taxonomy failure through a structured logger at its level.
+ *
+ * The failure kind is merged into the structured metadata as `boundary`, so
+ * log consumers can classify a report without parsing the message. Levels
+ * below the logger's threshold are dropped by the logger itself.
+ *
+ * @param f - The failure to report.
+ * @param logger - Plugin logger.
+ * @param extra - Additional structured metadata merged into the report.
+ */
+export async function reportFailure(
+  f: Failure,
+  logger: Logger,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const metadata = { ...(f.extra ?? {}), ...extra, boundary: f.kind };
+  switch (f.level) {
+    case 'error':
+      await logger.error(f.message, metadata);
+      break;
+    case 'warn':
+      await logger.warn(f.message, metadata);
+      break;
+    case 'debug':
+      await logger.debug(f.message, metadata);
+      break;
+    default:
+      await logger.info(f.message, metadata);
+  }
 }

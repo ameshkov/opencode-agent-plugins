@@ -240,11 +240,14 @@ export class Scenario {
 
   /** Creates a session via `POST /session` (query directory = workspace). */
   private async createSession(baseUrl: string): Promise<string> {
+    // The first session of a cold container bootstraps opencode's config and
+    // plugin resolution, which can take ~10s locally and much longer on a
+    // busy/shared network — keep the budget generous, like promptSession's.
     const response = await fetch(`${baseUrl}/session?directory=/app/workspace`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'e2e' }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(90_000),
     });
     expect(response.ok, `session create must succeed (${response.status})`).toBe(true);
     const session = (await response.json()) as { id: string };

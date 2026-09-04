@@ -33,29 +33,68 @@ export class ConfigEditError extends Error {
   }
 }
 
+/** The config file resolved for a scope. */
+export interface ResolvedConfigFile {
+  /** Absolute path of the config file to read or edit. */
+  path: string;
+  /**
+   * True when `opencode.jsonc` was preferred over an existing `opencode.json`
+   * in the target scope (§5.11) — the CLI announces this.
+   */
+  jsoncWins: boolean;
+}
+
 /**
  * Resolves the config file for a scope.
  *
- * For the project scope `opencode.jsonc` wins over `opencode.json` when both
- * exist (and the CLI says so); when neither exists the default
- * `opencode.json` path is returned (creation happens on write).
+ * For the project and global scopes `opencode.jsonc` wins over
+ * `opencode.json` when both exist (§5.11 — and the CLI says so); when
+ * neither exists the default `opencode.json` path is returned (creation
+ * happens on write). A `--config` path is returned verbatim.
  *
  * @param scope - Which config to target.
- * @returns The absolute config file path.
+ * @returns The resolved config path and whether the `.jsonc` preference
+ * applied.
  */
-export async function resolveConfigFile(scope: ConfigScope): Promise<string> {
+export async function resolveConfigFile(scope: ConfigScope): Promise<ResolvedConfigFile> {
   if (scope.kind === 'custom') {
-    return scope.path;
+    return { path: scope.path, jsoncWins: false };
   }
-  if (scope.kind === 'global') {
-    return join(homedir(), '.config', 'opencode', 'opencode.json');
+  const dir = scope.kind === 'global' ? join(homedir(), '.config', 'opencode') : scope.cwd;
+  return resolveConfigInDir(dir);
+}
+
+/**
+ * Applies the `.jsonc`-wins preference inside one config directory (§5.11).
+ *
+ * @param dir - Config directory to inspect (project root or global config
+ * dir).
+ * @returns The resolved path and whether the `.jsonc` file won over `.json`.
+ */
+function resolveConfigInDir(dir: string): ResolvedConfigFile {
+  const jsonc = join(dir, 'opencode.jsonc');
+  const json = join(dir, 'opencode.json');
+  if (existsSync(jsonc) && existsSync(json)) {
+    return { path: jsonc, jsoncWins: true };
   }
-  const jsonc = join(scope.cwd, 'opencode.jsonc');
-  const json = join(scope.cwd, 'opencode.json');
   if (existsSync(jsonc)) {
-    return jsonc;
+    return { path: jsonc, jsoncWins: false };
   }
-  return json;
+  return { path: json, jsoncWins: false };
+}
+
+/**
+ * The CLI announcement for a `.jsonc`-preferred config (§5.11), or null when
+ * the `.jsonc` file did not win.
+ *
+ * @param resolved - The resolved config file.
+ * @returns The note to print, or null when nothing to say.
+ */
+export function configPreferenceNote(resolved: ResolvedConfigFile): string | null {
+  if (!resolved.jsoncWins) {
+    return null;
+  }
+  return `config: ${resolved.path} (opencode.jsonc wins over opencode.json)`;
 }
 
 /**

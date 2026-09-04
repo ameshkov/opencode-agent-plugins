@@ -7,6 +7,7 @@ describe('failure taxonomy', () => {
     expect(failure('manifest-unknown-fields', 'x').level).toBe('warn');
     expect(failure('skills-missing', 'x').level).toBe('debug');
     expect(failure('skills-invalid', 'x').level).toBe('warn');
+    expect(failure('skills-collision', 'x').level).toBe('warn');
     expect(failure('mcp-invalid', 'x').level).toBe('error');
     expect(failure('server-invalid', 'x').level).toBe('warn');
     expect(failure('server-transport', 'x').level).toBe('warn');
@@ -32,6 +33,7 @@ describe('failure taxonomy', () => {
       'path-escape',
       'skills-missing',
       'skills-invalid',
+      'skills-collision',
       'skills-nested',
       'mcp-missing',
       'mcp-invalid',

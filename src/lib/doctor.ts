@@ -103,8 +103,8 @@ async function auditConfig(
   const items: DoctorItem[] = [];
   const configSlugs = new Set<string>();
   const pathKeys = new Set<string>();
-  const configPath = await resolveConfigFile(configScope);
-  const text = await readFile(configPath, 'utf8').catch(() => null);
+  const resolvedPath = await resolveConfigFile(configScope);
+  const text = await readFile(resolvedPath.path, 'utf8').catch(() => null);
   if (text === null) {
     return { configSlugs, pathKeys, items };
   }

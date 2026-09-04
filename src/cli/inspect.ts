@@ -4,12 +4,19 @@
 
 import { pruneDoctor, runDoctor } from '../lib/doctor.js';
 import { listInstalled, manifestNameOf } from '../lib/store.js';
+import { checkStoreStatuses } from '../lib/update.js';
+import type { UpdateStatus } from '../lib/update.js';
 import type { DoctorReport } from '../lib/doctor.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { confirm } from './prompts.js';
 
 /**
- * Runs `list` — installed plugins with their local status (no network).
+ * Runs `list` — installed plugins with source, ref, commit, version, and
+ * update status (§5.11).
+ *
+ * The status column resolves the recorded ref remotely with the same engine
+ * as `check`; without the `git` binary or network access the command still
+ * completes and reports the entry as `unreachable`.
  *
  * @returns The process exit code.
  */
@@ -19,20 +26,42 @@ export async function cmdList(): Promise<number> {
     console.log('no plugins installed in the client store.');
     return 0;
   }
+  const statuses = new Map((await checkStoreStatuses()).map((status) => [status.slug, status]));
   for (const entry of installed) {
-    const name = await manifestNameOf(entry.root);
     const meta = entry.meta;
     if (meta === null) {
       console.log(`${entry.slug}  [corrupted: missing metadata]`);
       continue;
     }
+    const name = await manifestNameOf(entry.root);
     const version = meta.manifestVersion === undefined ? '' : ` v${meta.manifestVersion}`;
     const ref = meta.ref === undefined ? 'HEAD' : meta.ref;
+    const status = statuses.get(entry.slug);
     console.log(
-      `${name ?? entry.slug}${version}  ${meta.url}  ref:${ref}  commit:${meta.resolvedCommit.slice(0, 12)}`,
+      `${name ?? entry.slug}${version}  ${meta.url}  ref:${ref}  commit:${meta.resolvedCommit.slice(0, 12)}  ${status === undefined ? 'unknown' : statusLabel(status)}`,
     );
   }
   return 0;
+}
+
+/** Maps a check status to the `list` status column label (§5.11). */
+function statusLabel(status: UpdateStatus): string {
+  switch (status.status) {
+    case 'up-to-date':
+      return 'current';
+    case 'update-available':
+      return 'update available';
+    case 'pinned':
+      return 'pinned';
+    case 'moved-tag':
+      return 'update available (tag moved; update requires --force)';
+    case 'unreachable':
+      return `unreachable${status.detail === undefined ? '' : ` (${status.detail})`}`;
+    case 'corrupted':
+      return 'corrupted';
+    case 'local-path':
+      return 'local path';
+  }
 }
 
 /**

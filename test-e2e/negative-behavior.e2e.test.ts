@@ -8,7 +8,9 @@
  * - mcp.json $schema version mismatch → MCP disabled, skills still load
  *   (§5.9);
  * - user-authored `mcp.echo` entry → user config wins, our server is skipped
- *   (§3.2, §5.7).
+ *   (§3.2, §5.7);
+ * - user-authored `skills.paths` entry → user config wins, the plugin's
+ *   whole `skills/` dir is skipped and reported (§3.2, §5.6).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -71,6 +73,29 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
         expect(toolsOf(main.request).has(TOOL_ECHO), 'user config must win').toBe(false);
         // The plugin itself still loaded its skills.
         expect(systemText(main.request)).toContain('<name>hello</name>');
+        expect(result.prompt.info.role).toBe('assistant');
+      });
+    },
+    10 * 60 * 1000,
+  );
+
+  it(
+    'user-authored skills.paths entry wins: the plugin skills dir is skipped',
+    async () => {
+      await withScenario(await imageTag(), 'skill-collision', {}, async (scenario) => {
+        const result = await scenario.session();
+        const main = mainRequestOf(result.captures);
+        const system = systemText(main.request);
+        // The user's `hello` skill is still advertised — their
+        // `skills.paths` entry is left untouched (§3.2) ...
+        expect(system).toContain('<name>hello</name>');
+        // ... while the plugin's `skills/` dir was NOT registered: the
+        // fixture's nested `references/SKILL.md` (exposed in `hook` mode via
+        // the recursive host scan, agent-plugins.e2e.test.ts) is gone (§5.6).
+        expect(system).not.toContain('<name>nested</name>');
+        // The collision was reported: user config wins, the plugin's dir is
+        // skipped (§5.6) — the log line surfaces in opencode's printed logs.
+        expect(scenario.output()).toContain('user config wins');
         expect(result.prompt.info.role).toBe('assistant');
       });
     },

@@ -206,9 +206,48 @@ describe('CLI lifecycle', () => {
     }
   });
 
-  it('list shows the installed plugin', async () => {
+  it('install says so when opencode.jsonc wins over opencode.json (§5.11)', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const scope = await tempDir('oap-cli-jsonc-');
+    const cwd = process.cwd();
+    try {
+      const jsonPath = join(scope.root, 'opencode.json');
+      const jsoncPath = join(scope.root, 'opencode.jsonc');
+      await writeFile(jsonPath, '{}', 'utf8');
+      await writeFile(jsoncPath, '{}', 'utf8');
+      process.chdir(scope.root);
+      const exitCode = await cmdInstall(parseArgs(['install', plugin.root, '--yes']));
+      expect(exitCode).toBe(0);
+      // The edit lands in opencode.jsonc; opencode.json is untouched.
+      expect(await readFile(jsoncPath, 'utf8')).toContain(plugin.root);
+      expect(await readFile(jsonPath, 'utf8')).toBe('{}');
+      const logs = vi
+        .mocked(console.log)
+        .mock.calls.map((call) => String(call[0]))
+        .join('\n');
+      expect(logs).toContain(jsoncPath);
+      expect(logs).toContain('opencode.jsonc wins over opencode.json');
+    } finally {
+      process.chdir(cwd);
+      await plugin.cleanup();
+      await scope.cleanup();
+    }
+  });
+
+  it('list shows the installed plugin with its status column (§5.11)', async () => {
     const exitCode = await cmdList();
     expect(exitCode).toBe(0);
+    // The HEAD-sourced install is still up to date at this point (the
+    // branch only moves in the next test), so the status column reads
+    // "current" — the design's `current / update available / pinned` set.
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((call) => String(call[0]))
+      .join('\n');
+    expect(output).toContain('hello v1.0.0');
+    expect(output).toContain('file://');
+    expect(output).toContain('ref:HEAD');
+    expect(output).toContain('  current');
   });
 
   it('check reports up to date, then update available after a push', async () => {

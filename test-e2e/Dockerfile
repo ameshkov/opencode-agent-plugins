@@ -107,6 +107,10 @@ RUN chmod +x /app/fixtures/git-plugin/bin/serve.js
 COPY test-e2e/fixtures/broken-plugin/ /app/fixtures/broken-plugin/
 COPY test-e2e/fixtures/mismatch-plugin/ /app/fixtures/mismatch-plugin/
 
+# User-authored skills fixture: a `hello` skill colliding with my-plugin's
+# (the skill-collision scenario; user config wins, §3.2/§5.6).
+COPY test-e2e/fixtures/user-skills/ /app/fixtures/user-skills/
+
 # Bare-command (PATH-resolved) MCP tool for the remote fixture.
 COPY test-e2e/path-bin/e2e-path-tool /app/path-bin/e2e-path-tool
 RUN chmod +x /app/path-bin/e2e-path-tool

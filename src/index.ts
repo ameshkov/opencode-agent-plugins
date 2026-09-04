@@ -14,7 +14,8 @@
 import type { Plugin } from '@opencode-ai/plugin';
 import { parseOptions, type OptionsParseResult } from './options.js';
 import { createLogger } from './utils/index.js';
-import { registerAgentPlugins, type RuntimeConfig } from './register.js';
+import { registerAgentPlugins } from './register.js';
+import type { RuntimeConfig } from './register-types.js';
 
 const agentPlugins: Plugin = async (input, options) => {
   let parsed: OptionsParseResult | undefined;

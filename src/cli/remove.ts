@@ -6,6 +6,7 @@ import { removePlugin } from '../lib/install.js';
 import { findStoreEntry } from '../lib/store.js';
 import { dataDirForKey } from '../lib/data.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
+import { printConfigNote } from './output.js';
 import { confirm } from './prompts.js';
 
 /**
@@ -62,5 +63,6 @@ export async function cmdRemove(args: ParsedArgs): Promise<number> {
     return 1;
   }
   console.log(result.message ?? 'removed.');
+  printConfigNote(result);
   return 0;
 }

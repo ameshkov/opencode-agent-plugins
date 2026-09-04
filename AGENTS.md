@@ -28,6 +28,7 @@ opencode-agent-plugins/
 │   ├── cli/                # CLI commands, one file per command group
 │   │   ├── index.ts        # CLI entry (bin: opencode-agent-plugins)
 │   │   ├── args.ts         # minimal flag/positional parser
+│   │   ├── output.ts       # shared CLI output helpers
 │   │   ├── prompts.ts      # stdin confirmation prompt
 │   │   └── install/remove/update/inspect.ts
 │   ├── lib/                # shared core — no @opencode-ai* runtime deps
@@ -51,6 +52,9 @@ opencode-agent-plugins/
 │   ├── register.ts         # plugin pipeline: resolve → validate → register
 │   │                         (config-hook logic; outside lib/ because it talks
 │   │                         to the opencode Config shape)
+│   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, config.mcp writes
+│   ├── register-skills.ts  # skills registration: collide-skip, config.skills.paths pushes
+│   ├── register-types.ts   # shared RuntimeConfig/RegisterState for the register-* modules
 │   ├── schemas/            # vendored schemas (committed, never fetched at runtime)
 │   │   ├── 1.0.0-plugin.schema.json
 │   │   └── 1.0.0-mcp.schema.json
@@ -127,7 +131,9 @@ This plugin talks to opencode exclusively through the `config` hook:
   would clobber user intent (an `mcp: { "name": { "enabled": false } }` stub
   or a user-defined server of the same name). Any pre-existing `config.mcp`
   entry or `skills.paths` entry that collides with a plugin registration is
-  left untouched; the plugin's registration is skipped and reported.
+  left untouched; the plugin's registration is skipped and reported. Skills
+  registration is directory-granular, so a colliding skill name skips the
+  plugin's whole `skills/` dir (user-config-wins, `docs/design.md` §5.6).
 - **No network access at startup.** Git URLs and installed plugin names
   resolve against the client store; sources that cannot be resolved without
   fetching are skipped with a warning. Startup stays fast and offline

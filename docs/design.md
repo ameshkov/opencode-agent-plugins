@@ -184,6 +184,9 @@ On every Opencode start the plugin:
    registration is skipped and reported. This also gives users an escape hatch
    the portable format lacks (per-server `timeout`, `enabled`, name overrides):
    define the entry yourself under the same name and the plugin defers (§5.7).
+   Skills are directory-granular: a skill-name collision with an existing
+   `skills.paths` entry skips the plugin's whole `skills/` dir (user config
+   wins, §5.6).
 5. Logs a structured summary: loaded N skills, M servers (M-local/remote/skipped),
    per-plugin status. No startup crashes ever — every failure goes through the
    failure taxonomy (§6).
@@ -509,10 +512,15 @@ Rules enforced:
   considered and rejected: it adds staleness and sync complexity to close a hole
   that only exists under one of the two observed scan behaviors.
 - Collisions: skill names must be unique across all locations (per the skills
-  doc). We detect duplicates at registration time by scanning the already-present
-  `config.skills.paths` targets (paths we registered this run, plus any
-  pre-existing entries) and warn; last-write/precedence behavior on duplicates is
-  Opencode's, and the E2E test asserts names stay unique in practice.
+  doc). At registration time we scan the already-present `config.skills.paths`
+  targets (paths we registered this run, plus any pre-existing entries) and
+  compare their skill names against the plugin's. **User config wins**: a
+  collision with a *pre-existing* entry warns and we skip ours; a collision
+  with a path we registered earlier in this same hook run is a *plugin–plugin*
+  collision, errors, and skips the later one. Registration is
+  directory-granular, so a colliding name drops the plugin's whole `skills/`
+  dir (with a warning naming the skill), mirroring §5.7's `mcp` override
+  semantics.
 
 ### 5.7 MCP translation (`mcp.ts`)
 
@@ -612,9 +620,12 @@ Details:
 The same npm package exposes a CLI (`"bin": { "opencode-agent-plugins": "build/cli/index.js" }`)
 that manages the plugin store and the user's Opencode config. It runs on Node
 (≥22) **outside** Opencode. The `git` binary is required only by git-backed
-commands (`install` from a URL, `check`, `update`) and is checked lazily when
-such a command runs — `list`, `remove`, `doctor`, and path-sourced `install`
-work on machines without git. It shares `src/lib/` with the
+commands (`install` from a URL, `check`, `update`, and `list`'s status column)
+and is checked lazily when such a command runs — `remove`, `doctor`, and
+path-sourced `install` work on machines without git, while `list` still
+completes and reports every git-sourced plugin as `unreachable` when it
+cannot resolve the recorded ref (its status is classified exactly like
+`check`). It shares `src/lib/` with the
 plugin, so install-time validation is byte-identical to what the plugin will do.
 
 | Command | What it does |
@@ -785,6 +796,7 @@ bounds the realistic failure modes:
 | Invalid individual server entry (incl. remote URL/header rule violations, §5.7) | server | skip entry, continue | warn |
 | Unsupported transport (`sse`) | server | skip entry, continue | warn |
 | Server name collides with existing `config.mcp` entry | server | existing entry wins — user config: warn + skip ours; plugin–plugin (same hook run): error + skip the later one | warn / error |
+| Skill name collides with an existing `skills.paths` entry | skill | existing entry wins — user config: warn + skip ours; plugin–plugin (same hook run): error + skip the later one | warn / error |
 | Nested `SKILL.md` deeper than `skills/<name>/` | skill | not a skill per spec §7.1; not registered by us; warn that Opencode may still expose it (§5.6) | warn |
 | Server fails to start/connect/auth (runtime) | server | Opencode drops it; other components unaffected | warn (from Opencode) |
 | Git-sourced plugin not installed at startup | source | skip entry, continue — no network fetch | warn |
@@ -911,7 +923,8 @@ Findings that adjust the design:
    - Remote URL/header rules (§5.7): userinfo, fragment, non-loopback HTTP,
      case-insensitive duplicate header names → invalid entry.
    - Name collisions and sanitization (§5.7): user entry wins, plugin–plugin
-     collision skips the later one, dotted plugin names sanitize to `-`.
+     collision skips the later one, dotted plugin names sanitize to `-`. Skill
+     name collisions (§5.6) behave the same way at directory granularity.
    - Nested `SKILL.md` below `skills/<name>/` → discovery warning, not registered.
    - Placeholder expansion: `./`, `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`, escape attempts
      (`../` both pre- and post-expansion), literal unknown placeholders, expansion

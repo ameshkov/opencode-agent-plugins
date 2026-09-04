@@ -113,6 +113,60 @@ describe('agentPlugins plugin', () => {
     }
   });
 
+  it('skips the plugin skills dir on a pre-existing skill-name collision', async () => {
+    const userSkills = await tmpPlugin(
+      { 'skills/hello/SKILL.md': skillMd('hello', 'User skill.') },
+      'oap-user-skills-',
+    );
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Plugin skill.'),
+      'skills/world/SKILL.md': skillMd('world', 'Plugin world.'),
+    });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
+      const config = {
+        skills: { paths: [`${userSkills.root}/skills`] },
+      } as unknown as RuntimeConfig;
+      await hooks.config!(config);
+      // The colliding plugin skills dir is NOT registered (§3.2), even though
+      // it also holds a non-colliding skill (registration is directory-granular).
+      expect(config.skills!.paths).toEqual([`${userSkills.root}/skills`]);
+      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
+      expect(messages.some((m) => m.includes('user config wins'))).toBe(true);
+    } finally {
+      await userSkills.cleanup();
+      await plugin.cleanup();
+    }
+  });
+
+  it('skips the later plugin skills dir on a plugin-plugin collision', async () => {
+    const first = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'First.'),
+    });
+    const second = await tmpPlugin({
+      'plugin.json': JSON.stringify({
+        ...JSON.parse(VALID_PLUGIN_JSON),
+        name: 'second',
+      }),
+      'skills/hello/SKILL.md': skillMd('hello', 'Second.'),
+    });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [first.root, second.root] });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+      expect(config.skills?.paths).toEqual([`${await realpath(first.root)}/skills`]);
+      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
+      expect(messages.some((m) => m.includes('registered earlier in this run'))).toBe(true);
+    } finally {
+      await first.cleanup();
+      await second.cleanup();
+    }
+  });
+
   it('skips a plugin with an invalid manifest and continues with others', async () => {
     const bad = await tmpPlugin({
       'plugin.json': JSON.stringify({

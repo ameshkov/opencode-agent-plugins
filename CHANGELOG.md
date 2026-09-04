@@ -50,3 +50,10 @@ and this project adheres to
   and `typescript-eslint` removed from `devDependencies`).
 - Upgraded TypeScript to 7.0.2 (typescript-eslint does not support TS 7;
   the oxlint switch unblocks the upgrade).
+
+### Fixed
+
+- CLI now announces which config file it edited when `opencode.jsonc` wins
+  over `opencode.json` in the target scope (§5.11), and the `.jsonc`
+  preference now also applies to the `--global` scope (matching OpenCode's
+  own config lookup, which probes `opencode.jsonc` first).
