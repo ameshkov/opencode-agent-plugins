@@ -191,9 +191,12 @@ export async function applyInstall(
     }
     configNote = registered.configNote;
   }
+  const message = options.noRegister
+    ? `validated ${plan.raw} (local path, not registered; add the config snippet below, then restart OpenCode to use it).`
+    : `registered ${plan.raw} (local path). Restart OpenCode to use it.`;
   return {
     ok: true,
-    message: `registered ${plan.raw} (local path). Restart OpenCode to use it.`,
+    message,
     ...(configNote === undefined ? {} : { configNote }),
   };
 }
@@ -264,9 +267,12 @@ async function applyGitInstall(
   const manifestVersion = plan.validated.manifest.version
     ? ` ${plan.validated.manifest.version}`
     : '';
+  const message = options.noRegister
+    ? `installed ${plan.validated.manifest.name}${manifestVersion} (not registered; add the config snippet below, then restart OpenCode to use it).`
+    : `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`;
   return {
     ok: true,
-    message: `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`,
+    message,
     ...(configNote === undefined ? {} : { configNote }),
   };
 }

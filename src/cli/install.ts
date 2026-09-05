@@ -62,7 +62,7 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   }
   console.log(result.message ?? 'installed.');
   printConfigNote(result);
-  if (boolFlag(args.flags, '--no-register') && plan.kind === 'git') {
+  if (boolFlag(args.flags, '--no-register')) {
     console.log(
       `\nAdd this to your opencode config's "plugin" array:\n` +
         `  ["opencode-agent-plugins", { "plugins": ["${plan.raw}"] }]`,

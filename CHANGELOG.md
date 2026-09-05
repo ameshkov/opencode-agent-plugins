@@ -57,3 +57,7 @@ and this project adheres to
   over `opencode.json` in the target scope (§5.11), and the `.jsonc`
   preference now also applies to the `--global` scope (matching OpenCode's
   own config lookup, which probes `opencode.jsonc` first).
+- `install --no-register` prints the config snippet for local path sources
+  too (not just git URLs, §5.11), and the success message no longer claims a
+  registration happened when the config edit was skipped (it reports
+  "not registered" and points at the printed snippet).

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { tempDir, storeEnv, skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../../test/helpers.js';
@@ -8,7 +8,8 @@ import { cmdRemove } from './remove.js';
 import { cmdCheck, cmdUpdate } from './update.js';
 import { cmdList, cmdDoctor, cmdPrune } from './inspect.js';
 import { parseArgs } from './args.js';
-import { installedRootFor, readMeta } from '../lib/store.js';
+import { installedRootFor, readMeta, removeMeta } from '../lib/store.js';
+import { dataDirForKey } from '../lib/data.js';
 import { slugOf } from '../lib/resolve.js';
 
 /** Runs a git command, failing the test on error. */
@@ -203,6 +204,58 @@ describe('CLI lifecycle', () => {
     } finally {
       await plugin.cleanup();
       await fresh.cleanup();
+    }
+  });
+
+  it('install --no-register prints a config snippet for a path source (§5.11)', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    try {
+      const before = await readFile(configPath, 'utf8');
+      const exitCode = await cmdInstall(
+        argsOf('install', [plugin.root], ['--no-register', '--yes']),
+      );
+      expect(exitCode).toBe(0);
+      // Nothing is written: the user adds the printed snippet manually.
+      expect(await readFile(configPath, 'utf8')).toBe(before);
+      const logs = vi
+        .mocked(console.log)
+        .mock.calls.map((call) => String(call[0]))
+        .join('\n');
+      expect(logs).toContain('Add this to your opencode config');
+      expect(logs).toContain(`["opencode-agent-plugins", { "plugins": ["${plugin.root}"] }]`);
+      expect(logs).toContain('not registered');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('install --no-register prints a config snippet for a git source (§5.11)', async () => {
+    const fixture = await gitFixture({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+    });
+    try {
+      const before = await readFile(configPath, 'utf8');
+      const exitCode = await cmdInstall(
+        argsOf('install', [fixture.source], ['--no-register', '--yes']),
+      );
+      expect(exitCode).toBe(0);
+      // The store entry is created, but the config is left untouched.
+      expect(await readFile(configPath, 'utf8')).toBe(before);
+      expect(await readMeta(fixture.slug, env)).not.toBeNull();
+      const logs = vi
+        .mocked(console.log)
+        .mock.calls.map((call) => String(call[0]))
+        .join('\n');
+      expect(logs).toContain(`["opencode-agent-plugins", { "plugins": ["${fixture.source}"] }]`);
+      expect(logs).toContain('not registered');
+    } finally {
+      // The store entry holds no config reference (registration was skipped),
+      // so remove it to keep the shared suite state consistent.
+      await rm(installedRootFor(fixture.slug, env), { recursive: true, force: true });
+      await removeMeta(fixture.slug, env);
+      await rm(dataDirForKey(fixture.slug, env), { recursive: true, force: true });
+      await fixture.cleanup();
     }
   });
 
