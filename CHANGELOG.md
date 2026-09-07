@@ -61,3 +61,8 @@ and this project adheres to
   too (not just git URLs, §5.11), and the success message no longer claims a
   registration happened when the config edit was skipped (it reports
   "not registered" and points at the printed snippet).
+- Git installs and updates now stage the tree shallow at the commit
+  `ls-remote` resolved (§5.12.1) — `--depth 1` where the transport allows a
+  raw-SHA fetch, with a full clone only as a fallback — instead of
+  full-cloning HEAD/SHA installs and cloning at the ref name, so the
+  recorded `resolvedCommit` always matches the installed tree.

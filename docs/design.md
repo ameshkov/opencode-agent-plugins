@@ -255,7 +255,8 @@ opencode-agent-plugins/
 │   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
 │   │   ├── install.ts      # install/update/remove operations (git + swap + config edit)
 │   │   ├── update.ts       # check/update lifecycle (staging → validate → swap)
-│   │   ├── git.ts          # git availability, ls-remote, clone/stage helpers
+│   │   ├── git.ts          # git availability, ls-remote, ref resolution
+│   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
 │   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
 │   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
@@ -716,8 +717,9 @@ at startup (§5.3.3); updates are applied by `opencode-agent-plugins check` / `u
   version is shown by `update` after staging. Reports per plugin: `up to date` /
   `update available` / `pinned (immutable)` / `unreachable`.
   **No restart needed — `check` changes nothing.**
-- `update` then re-fetches: clone into a temp staging dir at the recorded `ref`
-  (or remote `HEAD`), strip `.git`, run the full validation pipeline on the staged
+- `update` then re-fetches: clone into a temp staging dir at the resolved ref
+  (the commit `ls-remote` reported, §5.12.1's clone strategy), strip `.git`,
+  run the full validation pipeline on the staged
   copy — all failure modes are caught here, *before* anything live is touched —
   and only then swap it into `installed/<slug>` (rename `installed/<slug>` →
   `.old-<slug>`, rename staged → `installed/<slug>`) and rewrite

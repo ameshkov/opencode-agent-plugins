@@ -11,7 +11,8 @@
 
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { resolveRemoteRef, stageTree } from './git.js';
+import { resolveRemoteRef } from './git.js';
+import { stageTree } from './clone.js';
 import { configSourcesOf, resolveConfigFile, type ConfigScope } from './config-file.js';
 import { dataDirForKey } from './data.js';
 import {
@@ -236,7 +237,7 @@ async function swapUpdate(
   newCommit: string,
   env: Record<string, string | undefined>,
 ): Promise<UpdateStatus> {
-  const staged = await stageTree(meta.url, meta.ref);
+  const staged = await stageTree(meta.url, meta.ref, newCommit);
   if (!staged.ok) {
     return statusFor(slug, meta, 'unreachable', staged.error);
   }

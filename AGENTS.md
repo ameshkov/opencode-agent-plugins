@@ -36,7 +36,8 @@ opencode-agent-plugins/
 │   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
 │   │   ├── install.ts      # install/remove operations (git + swap + config edit)
 │   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
-│   │   ├── git.ts          # git availability, ls-remote, clone/stage helpers
+│   │   ├── git.ts          # git availability, ls-remote, ref resolution
+│   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
 │   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
 │   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)

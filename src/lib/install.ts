@@ -10,7 +10,8 @@
 
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { gitAvailable, resolveRemoteCommit, stageTree } from './git.js';
+import { gitAvailable, resolveRemoteCommit } from './git.js';
+import { stageTree } from './clone.js';
 import {
   applyRegisterSource,
   applyRemoveSource,
@@ -144,7 +145,7 @@ async function prepareGitInstall(
   if (!commit.ok) {
     return { ok: false, failure: failure('install-fail', commit.error) };
   }
-  const staged = await stageTree(source.url, source.ref);
+  const staged = await stageTree(source.url, source.ref, commit.commit);
   if (!staged.ok) {
     return { ok: false, failure: failure('install-fail', staged.error) };
   }

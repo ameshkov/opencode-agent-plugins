@@ -1,18 +1,16 @@
 /**
- * Git operations for the CLI (`docs/design.md` §5.12).
+ * Git ref resolution for the CLI (`docs/design.md` §5.12).
  *
  * `git` is required only by git-backed commands (`install` from a URL,
- * `check`, `update`) and is checked lazily via {@link gitAvailable}. All
- * network access happens here — the plugin entry never touches it.
+ * `check`, `update`) and is checked lazily via {@link gitAvailable}. Ref
+ * resolution happens here; tree staging (the clone strategy) lives in
+ * `clone.ts`. The plugin entry never touches git.
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 /** Result of running the `git` binary. */
-type GitRunResult = { ok: true; stdout: string } | { ok: false; stderr: string };
+export type GitRunResult = { ok: true; stdout: string } | { ok: false; stderr: string };
 
 /** Matches a full 40-hex commit SHA (pinned refs need no network). */
 const FULL_SHA_RE = /^[0-9a-f]{40}$/;
@@ -24,12 +22,12 @@ const FULL_SHA_RE = /^[0-9a-f]{40}$/;
  * @param url - Source URL as written in the config.
  * @returns The URL as `git` accepts it.
  */
-function toGitCliUrl(url: string): string {
+export function toGitCliUrl(url: string): string {
   return url.replace(/^git\+/, '');
 }
 
 /** Checks whether a ref is a full commit SHA. */
-function isFullSha(ref: string): boolean {
+export function isFullSha(ref: string): boolean {
   return FULL_SHA_RE.test(ref);
 }
 
@@ -49,7 +47,7 @@ export async function gitAvailable(): Promise<boolean> {
  * @param args - Arguments passed to git (no shell).
  * @returns The result; a missing binary surfaces as `ok: false`.
  */
-function runGit(args: string[]): Promise<GitRunResult> {
+export function runGit(args: string[]): Promise<GitRunResult> {
   return new Promise((resolveResult) => {
     const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -200,84 +198,4 @@ export async function resolveRemoteCommit(
 ): Promise<{ ok: true; commit: string } | { ok: false; error: string }> {
   const resolved = await resolveRemoteRef(url, ref);
   return resolved.ok ? { ok: true, commit: resolved.commit } : resolved;
-}
-
-/**
- * Stages a plugin tree (exported copy at the pinned ref, `.git` removed).
- *
- * `--depth 1` is used where the transport allows it; a raw commit SHA pin
- * (or a failed shallow/clone) falls back to a full clone + checkout. The
- * tree is then exported: `.git` is removed at install time (§5.3.2).
- *
- * @param url - Normalized git URL.
- * @param ref - Optional ref to check out (undefined = default HEAD).
- * @returns The staged tree directory, or a failure message.
- */
-export async function stageTree(
-  url: string,
-  ref?: string,
-): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'opencode-agent-plugins-'));
-  const result = await cloneInto(url, ref, dir);
-  if (!result.ok) {
-    await rm(dir, { recursive: true, force: true });
-    return { ok: false, error: result.error };
-  }
-  await rm(join(dir, '.git'), { recursive: true, force: true });
-  return { ok: true, dir };
-}
-
-/** Clones `url` at `ref` into `dir`, with the depth/fallback strategy. */
-async function cloneInto(
-  url: string,
-  ref: string | undefined,
-  dir: string,
-): Promise<{ ok: boolean; error: string }> {
-  const cliUrl = toGitCliUrl(url);
-  if (ref === undefined || isFullSha(ref)) {
-    const result = await runGit(['clone', '--quiet', cliUrl, dir]);
-    if (!result.ok) {
-      return { ok: false, error: result.stderr };
-    }
-    if (ref !== undefined) {
-      const checkout = await runGit(['-C', dir, 'checkout', '--quiet', ref]);
-      if (!checkout.ok) {
-        return { ok: false, error: checkout.stderr };
-      }
-    } else {
-      // A remote without a resolvable HEAD (e.g. a local bare repo whose
-      // default branch is unset) clones an empty tree — check out the unique
-      // branch so the exported tree is usable.
-      const head = await runGit(['-C', dir, 'rev-parse', '--verify', 'HEAD']);
-      if (!head.ok) {
-        const branches = await runGit([
-          '-C',
-          dir,
-          'for-each-ref',
-          '--format=%(refname:short)',
-          'refs/remotes/origin',
-        ]);
-        const first = branches.ok ? branches.stdout.trim().split('\n')[0] : undefined;
-        if (first === undefined || first === '') {
-          return { ok: false, error: 'remote has no resolvable branch to check out' };
-        }
-        const branch = first.replace(/^origin\//, '');
-        const checkout = await runGit(['-C', dir, 'checkout', '--quiet', '-B', branch, first]);
-        if (!checkout.ok) {
-          return { ok: false, error: checkout.stderr };
-        }
-      }
-    }
-    return { ok: true, error: '' };
-  }
-  const shallow = await runGit(['clone', '--quiet', '--depth', '1', '--branch', ref, cliUrl, dir]);
-  if (shallow.ok) {
-    return { ok: true, error: '' };
-  }
-  const full = await runGit(['clone', '--quiet', cliUrl, dir]);
-  if (!full.ok) {
-    return { ok: false, error: full.stderr };
-  }
-  const checkout = await runGit(['-C', dir, 'checkout', '--quiet', ref]);
-  return checkout.ok ? { ok: true, error: '' } : { ok: false, error: checkout.stderr };
 }
