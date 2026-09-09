@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failure, levelOf, type FailureKind } from './errors.js';
+import { FAILURE_LEVEL, failure, levelOf, type FailureKind } from './errors.js';
 
 describe('failure taxonomy', () => {
   it('maps every kind to its documented report level', () => {
@@ -22,31 +22,12 @@ describe('failure taxonomy', () => {
     expect(f.extra).toEqual({ server: 'echo' });
   });
 
-  it('levelOf agrees with failure-built records', () => {
-    const kinds: FailureKind[] = [
-      'plugin-missing',
-      'manifest-schema',
-      'manifest-fatal',
-      'manifest-unknown-fields',
-      'extensions-non-object',
-      'extension-namespace',
-      'path-escape',
-      'skills-missing',
-      'skills-invalid',
-      'skills-collision',
-      'skills-nested',
-      'mcp-missing',
-      'mcp-invalid',
-      'server-invalid',
-      'server-transport',
-      'server-collision',
-      'source-missing',
-      'source-corrupt',
-      'install-fail',
-      'check-unreachable',
-      'update-ref',
-      'config-edit',
-    ];
+  it('levelOf agrees with failure-built records for every declared kind', () => {
+    // Iterates the level map itself, so a new kind missing from this test is
+    // impossible: the union is exhaustive (typed) and the runtime list is
+    // derived from the same record (`source-duplicate` included).
+    const kinds = Object.keys(FAILURE_LEVEL) as FailureKind[];
+    expect(kinds).toHaveLength(23);
     for (const kind of kinds) {
       expect(levelOf(kind)).toBe(failure(kind, 'x').level);
     }

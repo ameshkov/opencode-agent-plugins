@@ -153,7 +153,30 @@ describe('discoverMcp', () => {
     try {
       const result = await discoverMcp(plugin.root, PLUGIN_SCHEMA, DATA);
       expect(result.servers.map((s) => s.name)).toEqual(['good']);
-      expect(result.failures.filter((f) => f.kind === 'server-invalid')).toHaveLength(4);
+      expect(result.failures.filter((f) => f.kind === 'server-invalid')).toHaveLength(3);
+      expect(result.failures.filter((f) => f.kind === 'path-escape')).toHaveLength(1);
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('classifies path escapes as path-escape (§5.5), others as server-invalid', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'mcp.json': mcpJson({
+        escape: { type: 'stdio', command: '../bin/c' },
+        badCwd: { type: 'stdio', command: './bin/b', cwd: '/etc' },
+      }),
+    });
+    try {
+      const result = await discoverMcp(plugin.root, PLUGIN_SCHEMA, DATA);
+      expect(result.servers).toEqual([]);
+      const escape = result.failures.find((f) => f.kind === 'path-escape');
+      expect(escape?.message).toContain('escapes the plugin root');
+      expect(escape?.extra).toMatchObject({ server: 'escape', section: '§5.5' });
+      expect(result.failures.filter((f) => f.kind === 'server-invalid')).toEqual([
+        expect.objectContaining({ extra: { server: 'badCwd' } }),
+      ]);
     } finally {
       await plugin.cleanup();
     }

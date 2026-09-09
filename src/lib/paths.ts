@@ -11,8 +11,18 @@
 
 import * as path from 'node:path';
 
-/** Result of resolving a path-ish value against an anchor. */
-export type PathResult = { ok: true; path: string } | { ok: false; reason: string };
+/**
+ * Result of resolving a path-ish value against an anchor.
+ *
+ * The failure variant carries a stable discriminator: `escape` for true
+ * containment violations (post-resolution path leaves the anchor) and
+ * `invalid` for values that are not in an allowed form at all. Callers use
+ * the discriminator to classify the violation in the failure taxonomy
+ * (`path-escape` vs. the generic server `server-invalid`), while `reason`
+ * stays the human-readable message.
+ */
+export type PathResult =
+  { ok: true; path: string } | { ok: false; kind: 'escape' | 'invalid'; reason: string };
 
 /** The two placeholders recognized by the spec. */
 /** @internal Exported for tests only; not part of the public module API. */
@@ -64,24 +74,29 @@ export function expandGeneric(value: string, root: string, dataDir: string): str
  *
  * @param command - The command token from `mcp.json`.
  * @param root - Absolute plugin root.
- * @returns The resolved command, or a failure with a reason.
+ * @returns The resolved command, or a failure with a kind (`escape` when the
+ * path leaves the root) and a reason.
  */
 export function resolveCommand(command: string, root: string): PathResult {
   if (/\s/.test(command)) {
-    return { ok: false, reason: 'command must be a single executable token' };
+    return { ok: false, kind: 'invalid', reason: 'command must be a single executable token' };
   }
   if (path.isAbsolute(command)) {
-    return { ok: false, reason: 'command may be a bare executable or ./… only' };
+    return {
+      ok: false,
+      kind: 'invalid',
+      reason: 'command may be a bare executable or ./… only',
+    };
   }
   if (command.startsWith('./') || command.startsWith('.\\')) {
     const resolved = path.resolve(root, command);
     if (!isInside(root, resolved)) {
-      return { ok: false, reason: `command ${command} escapes the plugin root` };
+      return { ok: false, kind: 'escape', reason: `command ${command} escapes the plugin root` };
     }
     return { ok: true, path: resolved };
   }
   if (command.startsWith('../') || command.startsWith('..\\')) {
-    return { ok: false, reason: `command ${command} escapes the plugin root` };
+    return { ok: false, kind: 'escape', reason: `command ${command} escapes the plugin root` };
   }
   return { ok: true, path: command };
 }
@@ -97,7 +112,8 @@ export function resolveCommand(command: string, root: string): PathResult {
  * @param cwd - The `cwd` value from `mcp.json`, or undefined for default.
  * @param root - Absolute plugin root.
  * @param dataDir - Absolute plugin data dir.
- * @returns The resolved absolute cwd, or a failure with a reason.
+ * @returns The resolved absolute cwd, or a failure with a kind (`escape` when
+ * the path leaves its anchor) and a reason.
  */
 export function resolveCwd(cwd: string | undefined, root: string, dataDir: string): PathResult {
   if (cwd === undefined || cwd === '') {
@@ -117,6 +133,7 @@ export function resolveCwd(cwd: string | undefined, root: string, dataDir: strin
   if (anchor === null) {
     return {
       ok: false,
+      kind: 'invalid',
       reason:
         'cwd must be a plugin-relative path (./…), ${PLUGIN_ROOT}-based, ' +
         'or ${PLUGIN_DATA}-based',
@@ -124,7 +141,7 @@ export function resolveCwd(cwd: string | undefined, root: string, dataDir: strin
   }
   const resolved = path.resolve(anchor, expanded);
   if (!isInside(anchor, resolved)) {
-    return { ok: false, reason: `cwd ${cwd} escapes its directory` };
+    return { ok: false, kind: 'escape', reason: `cwd ${cwd} escapes its directory` };
   }
   return { ok: true, path: resolved };
 }

@@ -171,9 +171,16 @@ function processServerEntries(
     }
     const translated = translateEntry(name, entry as McpServerEntry, pluginRoot, dataDir);
     if (translated.problem !== null) {
-      failures.push(
-        failure('server-invalid', `server "${name}": ${translated.problem}`, { server: name }),
-      );
+      const { kind, message } = translated.problem;
+      // A containment escape gets its own taxonomy boundary (§5.5); any other
+      // invalid entry stays a generic `server-invalid`.
+      if (kind === 'escape') {
+        failures.push(
+          failure('path-escape', `server "${name}": ${message}`, { server: name, section: '§5.5' }),
+        );
+      } else {
+        failures.push(failure('server-invalid', `server "${name}": ${message}`, { server: name }));
+      }
       continue;
     }
     if (translated.spec.kind === 'skipped') {
@@ -192,6 +199,17 @@ function processServerEntries(
 /** A parsed `mcpServers` entry before transport-specific processing. */
 type McpServerEntry = Record<string, unknown> & { type: string };
 
+/** Kind of an entry problem: a containment escape vs. any other invalid form. */
+type EntryProblemKind = 'escape' | 'invalid';
+
+/** A skipped-entry problem, classified for the failure taxonomy. */
+interface EntryProblem {
+  /** `escape` = a path leaves the plugin root/anchors (§5.5); else invalid form. */
+  kind: EntryProblemKind;
+  /** Human-readable description (the entry skip reason). */
+  message: string;
+}
+
 /**
  * Validates and translates a single entry (already passing `$defs/server`)
  * into OpenCode config, running the transport-specific checks: command/cwd
@@ -209,7 +227,7 @@ function translateEntry(
   entry: McpServerEntry,
   root: string,
   dataDir: string,
-): { spec: McpServerSpec; problem: string | null } {
+): { spec: McpServerSpec; problem: EntryProblem | null } {
   if (entry['type'] === 'sse') {
     return {
       spec: { name, kind: 'skipped', skipReason: 'transport "sse" is not supported' },
@@ -227,15 +245,21 @@ function translateStdio(
   entry: McpServerEntry,
   root: string,
   dataDir: string,
-): { spec: McpServerSpec; problem: string | null } {
+): { spec: McpServerSpec; problem: EntryProblem | null } {
   const command = entry['command'] as string;
   const resolved = resolveCommand(command, root);
   const cwdResolved = resolveCwd(entry['cwd'] as string | undefined, root, dataDir);
   if (!resolved.ok) {
-    return { spec: { name, kind: 'skipped' }, problem: resolved.reason };
+    return {
+      spec: { name, kind: 'skipped' },
+      problem: { kind: resolved.kind, message: resolved.reason },
+    };
   }
   if (!cwdResolved.ok) {
-    return { spec: { name, kind: 'skipped' }, problem: cwdResolved.reason };
+    return {
+      spec: { name, kind: 'skipped' },
+      problem: { kind: cwdResolved.kind, message: cwdResolved.reason },
+    };
   }
   const env = expandedEnvOf(entry, root, dataDir);
   env['PLUGIN_ROOT'] = root;
@@ -253,16 +277,22 @@ function translateStdio(
 function translateRemote(
   name: string,
   entry: McpServerEntry,
-): { spec: McpServerSpec; problem: string | null } {
+): { spec: McpServerSpec; problem: EntryProblem | null } {
   const url = entry['url'] as string;
   const urlProblem = validateRemoteUrl(url);
   if (urlProblem !== null) {
-    return { spec: { name, kind: 'skipped' }, problem: urlProblem };
+    return {
+      spec: { name, kind: 'skipped' },
+      problem: { kind: 'invalid', message: urlProblem },
+    };
   }
   const rawHeaders = isRecord(entry['headers']) ? (entry['headers'] as Record<string, string>) : {};
   const headerProblem = Object.keys(rawHeaders).length > 0 ? validateHeaders(rawHeaders) : null;
   if (headerProblem !== null) {
-    return { spec: { name, kind: 'skipped' }, problem: headerProblem };
+    return {
+      spec: { name, kind: 'skipped' },
+      problem: { kind: 'invalid', message: headerProblem },
+    };
   }
   const config: RemoteMcpConfig = { type: 'remote', url };
   if (Object.keys(rawHeaders).length > 0) {

@@ -5,9 +5,15 @@
 import { rm } from 'node:fs/promises';
 import { applyInstall, prepareInstall } from '../lib/install.js';
 import type { InstallPlan, OpResult } from '../lib/install.js';
+import { probeConfig } from '../lib/config-file.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { printConfigNote } from './output.js';
 import { confirm } from './prompts.js';
+
+/** Warning printed when the config has no `opencode-agent-plugins` entry. */
+const TUPLE_WARNING =
+  'warn:    your opencode config has no "opencode-agent-plugins" plugin entry; ' +
+  'OpenCode will not load it for the registered source';
 
 /**
  * Runs `install <source> [--ref <ref>] [--global|--config <path>] [--yes]
@@ -46,10 +52,17 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     console.log('dry-run: nothing was written.');
     return 0;
   }
+
+  if (!boolFlag(args.flags, '--no-register') && !(await ensureLoaderEntry(args))) {
+    await abortStagedPlan(plan);
+    return 1;
+  }
+
   if (!boolFlag(args.flags, '--yes')) {
     const ok = await confirm('Install this plugin?', false);
     if (!ok) {
       console.error('aborted.');
+      await abortStagedPlan(plan);
       return 1;
     }
   }
@@ -60,6 +73,22 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   if (!result.ok) {
     return printFailure(result);
   }
+  printInstallResult(result, plan, args);
+  return 0;
+}
+
+/**
+ * Prints the success output: message, config note, optional snippet.
+ *
+ * @param result - The successful operation result.
+ * @param plan - The applied plan (for the `--no-register` snippet).
+ * @param args - Parsed command line.
+ */
+function printInstallResult(
+  result: { message?: string; configNote?: string },
+  plan: InstallPlan,
+  args: ParsedArgs,
+): void {
   console.log(result.message ?? 'installed.');
   printConfigNote(result);
   if (boolFlag(args.flags, '--no-register')) {
@@ -68,7 +97,41 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
         `  ["opencode-agent-plugins", { "plugins": ["${plan.raw}"] }]`,
     );
   }
-  return 0;
+}
+
+/**
+ * Ensures the opencode config that `install` will edit contains the
+ * `["opencode-agent-plugins", {…}]` loader tuple.
+ *
+ * When the tuple is missing, any source registered on its own is inert —
+ * OpenCode never loads the loader plugin, so the config edit would be
+ * useless and `doctor` would report the source as unreferenced. The CLI
+ * therefore warns and, in interactive mode, asks the user to add the entry
+ * before registering (§5.11). `--yes` auto-adds (print-only warning);
+ * declining aborts the install with nothing written.
+ *
+ * @param args - Parsed command line (for the config scope and `--yes`).
+ * @returns `true` when registering may proceed (tuple present or the user
+ * accepted adding it).
+ */
+async function ensureLoaderEntry(args: ParsedArgs): Promise<boolean> {
+  const probe = await probeConfig(scopeOf(args));
+  if (probe.hasTuple) {
+    return true;
+  }
+  console.error(TUPLE_WARNING);
+  console.error(`config:   ${probe.path}`);
+  if (boolFlag(args.flags, '--yes')) {
+    return true;
+  }
+  const ok = await confirm(
+    'Add the "opencode-agent-plugins" entry to your opencode config so the source is loaded?',
+    true,
+  );
+  if (!ok) {
+    console.error('aborted: the plugin was not registered.');
+  }
+  return ok;
 }
 
 /**

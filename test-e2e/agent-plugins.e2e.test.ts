@@ -85,7 +85,7 @@ describe(`e2e: real opencode ${OPENCODE_VERSION} in Docker (testcontainers)`, ()
           const system = systemText(main.request);
           expect(system).toContain('<available_skills>');
           expect(system).toContain('<name>hello</name>');
-          // Scan-depth pin (opencode 1.18.25): the skills scan is recursive, so
+          // Scan-depth pin (opencode 1.18.30): the skills scan is recursive, so
           // the stray nested SKILL.md IS exposed — see the fixture comment and
           // §2.2.
           expect(system).toContain('<name>nested</name>');

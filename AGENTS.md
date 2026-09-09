@@ -25,61 +25,42 @@ opencode-agent-plugins/
 ├── src/
 │   ├── index.ts            # opencode plugin entry: (input, options) => Hooks
 │   ├── options.ts          # Zod schema for the plugin options object
-│   ├── cli/                # CLI commands, one file per command group
-│   │   ├── index.ts        # CLI entry (bin: opencode-agent-plugins)
-│   │   ├── args.ts         # minimal flag/positional parser
-│   │   ├── output.ts       # shared CLI output helpers
-│   │   ├── prompts.ts      # stdin confirmation prompt
-│   │   └── install/remove/update/inspect.ts
+│   ├── register.ts         # plugin pipeline: resolve → validate → register
+│   │                         (config-hook logic; talks to the opencode Config shape)
+│   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, config.mcp writes
+│   ├── register-skills.ts  # skills registration: collide-skip, config.skills.paths pushes
+│   ├── register-types.ts   # shared RuntimeConfig/RegisterState for the register-* modules
+│   ├── cli/                # opencode-agent-plugins binary: entry, flag parsing, prompts,
+│   │                         output, install/remove/update/inspect commands
 │   ├── lib/                # shared core — no @opencode-ai* runtime deps
-│   │                         (per docs/design.md §4.1):
+│   │                         (per docs/design.md §4.1); one module per concern:
 │   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
-│   │   ├── install.ts      # install/remove operations (git + swap + config edit)
-│   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
 │   │   ├── git.ts          # git availability, ls-remote, ref resolution
 │   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
+│   │   ├── install.ts      # install/remove operations (git + swap + config edit)
+│   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
 │   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
 │   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
 │   │   ├── mcp.ts          # mcp.json validation + translation to opencode config
-│   │   ├── remote.ts       # remote URL/header rule checks (§5.7)
 │   │   ├── skills.ts       # skill discovery + validation
 │   │   ├── frontmatter.ts  # minimal YAML frontmatter parser for SKILL.md
 │   │   ├── paths.ts        # containment + ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion
 │   │   ├── data.ts         # PLUGIN_DATA layout + creation
+│   │   ├── remote.ts       # remote URL/header rule checks (§5.7)
 │   │   ├── doctor.ts       # store/config drift report + prune
 │   │   ├── validate.ts     # shared “would register” pipeline (install preview)
 │   │   └── errors.ts       # failure taxonomy types + report-to-log mapping
-│   ├── register.ts         # plugin pipeline: resolve → validate → register
-│   │                         (config-hook logic; outside lib/ because it talks
-│   │                         to the opencode Config shape)
-│   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, config.mcp writes
-│   ├── register-skills.ts  # skills registration: collide-skip, config.skills.paths pushes
-│   ├── register-types.ts   # shared RuntimeConfig/RegisterState for the register-* modules
-│   ├── schemas/            # vendored schemas (committed, never fetched at runtime)
-│   │   ├── 1.0.0-plugin.schema.json
-│   │   └── 1.0.0-mcp.schema.json
+│   ├── schemas/            # vendored Agent Plugins schemas (committed, never fetched)
 │   └── utils/              # dependency-free helpers (logger, ...)
-├── scripts/
-│   ├── check-runtime-imports.mjs  # build gate: no @opencode-ai runtime imports
-│   └── update-schemas.mjs         # dev-only: verify/re-download vendored schemas
-├── test/                   # shared test infrastructure (no *.test.ts here)
-├── test-e2e/               # Docker e2e suite (real opencode + testcontainers)
-│   ├── global-setup.ts     # vitest globalSetup: docker check + image build (once per run)
-│   ├── helpers/            # shared scenario driver, capture parsing, exec helpers
-│   ├── agent-plugins.e2e.test.ts  # hook-mode vs static-mode assertions (§9.1)
-│   ├── remote-mcp.e2e.test.ts     # streamable-http, headers, redirects, PATH (§7)
-│   ├── cli-ops.e2e.test.ts        # CLI lifecycle, no opencode boot (cheap scenarios)
-│   ├── cli-session.e2e.test.ts    # CLI install/update/remove against real opencode
-│   ├── negative-behavior.e2e.test.ts  # §6 taxonomy anchors (invalid manifest, mismatch, stub)
-│   ├── Dockerfile          # pinned opencode + plugin build + fixtures + fake model server
-│   ├── bootstrap.mjs       # container entrypoint: fake model + opencode serve per mode
-│   ├── write-config.mjs    # writes opencode.json per scenario mode
-│   ├── git-fixture.mjs     # in-container git remote fixture manager (CLI scenarios)
-│   ├── fake-model-server.mjs      # OpenAI-compatible capture endpoint (exported)
-│   ├── path-bin/           # bare-command (PATH-resolved) MCP tool fixture
-│   └── fixtures/           # my-plugin (stdio+placeholders), remote-plugin,
-│                           # git-plugin, broken-plugin, mismatch-plugin
+├── scripts/                # build/dev gates: check-runtime-imports (no @opencode-ai
+│                             runtime imports), check-failure-kinds (§6 kinds),
+│                             update-schemas (dev-only schema sync)
+├── test/                   # shared test infrastructure (helpers, stub client)
+├── test-e2e/               # Docker e2e suite: real opencode + testcontainers, one
+│                             scenario file per area (agent-plugins, remote-mcp,
+│                             cli-ops, cli-session, negative-behavior) driven by
+│                             Dockerfile + bootstrap.mjs and fixtures/
 ├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
 └── docs/design.md          # the design document
 ```
@@ -98,7 +79,7 @@ and `jsonc-parser` — never `@opencode-ai/*`, not even for types — so the CLI
 installs and runs with no OpenCode dependency, and install-time validation is
 byte-identical to load-time validation. This dependency boundary
 (`src/lib/` → no `@opencode-ai/*`) is pinned by
-`scripts/check-runtime-imports.mjs` in `pnpm build`, which fails the build on
+`scripts/check-runtime-imports.ts` in `pnpm build`, which fails the build on
 any leaked `@opencode-ai/*` value import in the compiled `build/`.
 
 ```text
@@ -263,7 +244,7 @@ making it easier to find, update, and maintain them.
   package (`@opencode-ai/plugin`) is imported only for types (erased at
   compile time), so it lives in `devDependencies`. The compiled plugin
   output (`build/`) retains zero runtime `@opencode-ai/*` imports —
-  enforced by `scripts/check-runtime-imports.mjs` in `pnpm build`, which
+  enforced by `scripts/check-runtime-imports.ts` in `pnpm build`, which
   fails the build on any leaked value import (`import type { ... }` is the
   only correct form).
 - **Keep the opencode version in sync.** The opencode release is pinned

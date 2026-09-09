@@ -43,8 +43,11 @@ const SDK_IMPORT_RE = /\b(?:from|import)\s*\(?\s*['"]@opencode-ai\//;
  * comments are blanked to spaces) so reported line numbers stay accurate.
  * tsc-emitted `.js` does not embed `@opencode-ai` inside string/regex
  * literals, so comment-stripping is safe for leak detection here.
+ *
+ * @param src - Compiled source text.
+ * @returns The source with comments neutralised.
  */
-function stripComments(src) {
+function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, '')).replace(/\/\/.*$/gm, '');
 }
 
@@ -57,9 +60,12 @@ if (!statSync(buildDir, { throwIfNoEntry: false })?.isDirectory()) {
 
 /**
  * Recursively collect every compiled `.js` file under `dir`.
+ *
+ * @param dir - Directory to scan.
+ * @returns Absolute paths of the compiled files.
  */
-function collectJs(dir) {
-  const out = [];
+function collectJs(dir: string): string[] {
+  const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
@@ -71,7 +77,14 @@ function collectJs(dir) {
   return out;
 }
 
-const offenders = [];
+/** A leaked import found in the compiled output. */
+interface Offender {
+  file: string;
+  line: number;
+  text: string;
+}
+
+const offenders: Offender[] = [];
 for (const file of collectJs(buildDir)) {
   // Map stripped offsets back to original 1-based line numbers by scanning
   // whole-file content line-by-line after stripping comments.
@@ -85,7 +98,7 @@ for (const file of collectJs(buildDir)) {
   });
 }
 
-if (offenders.length) {
+if (offenders.length > 0) {
   console.error('check-runtime-imports: leaked @opencode-ai runtime import(s) in build/:');
   for (const { file, line, text } of offenders) {
     console.error(`  ${file}:${line}: ${text}`);

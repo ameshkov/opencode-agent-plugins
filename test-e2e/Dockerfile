@@ -8,14 +8,14 @@
 #
 # Build (from the repo root):
 #   docker build -f test-e2e/Dockerfile \
-#     --build-arg OPENCODE_VERSION=1.18.25 -t opencode-agent-plugins-e2e:1.18.25 .
+#     --build-arg OPENCODE_VERSION=1.18.30 -t opencode-agent-plugins-e2e:1.18.30 .
 #
 # Run manually:
-#   docker run --rm -p 4096:4096 opencode-agent-plugins-e2e:1.18.25 hook
+#   docker run --rm -p 4096:4096 opencode-agent-plugins-e2e:1.18.30 hook
 
-ARG OPENCODE_VERSION=1.18.25
+ARG OPENCODE_VERSION=1.18.30
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 # Re-declare the ARG inside the stage (a FROM-level ARG is not in scope here)
 # and propagate it to a layer-scoped ENV: buildkit keys RUN-layer cache on

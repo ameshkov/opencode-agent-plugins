@@ -22,11 +22,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '26'
   PNPM_VERSION: '10.14.0'
   # The @opencode-ai/plugin devDependency is pinned to the opencode release
   # the plugin is verified against. Matches package.json.
-  OPENCODE_VERSION: '1.18.25'
+  OPENCODE_VERSION: '1.18.30'
 
 jobs:
   ci:

@@ -1,8 +1,16 @@
-import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { tempDir, storeEnv, skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../../test/helpers.js';
+import {
+  gitBareFixture,
+  gitCmd,
+  skillMd,
+  storeEnv,
+  tempDir,
+  tmpPlugin,
+  VALID_PLUGIN_JSON,
+  writePluginTree,
+} from '../../test/helpers.js';
 import { cmdInstall } from './install.js';
 import { cmdRemove } from './remove.js';
 import { cmdCheck, cmdUpdate } from './update.js';
@@ -12,80 +20,15 @@ import { installedRootFor, readMeta, removeMeta } from '../lib/store.js';
 import { dataDirForKey } from '../lib/data.js';
 import { slugOf } from '../lib/resolve.js';
 
-/** Runs a git command, failing the test on error. */
-function git(args: string[], cwd?: string): Promise<string> {
-  return new Promise((resolveResult, reject) => {
-    execFile('git', args, { cwd }, (error, stdout, stderr) => {
-      if (error !== null) {
-        reject(new Error(`git ${args.join(' ')} failed: ${stderr}`));
-        return;
-      }
-      resolveResult(stdout);
-    });
-  });
-}
-
-/** Builds a bare git fixture from a file map and returns its source URL. */
-async function gitFixture(files: Record<string, string>): Promise<{
-  source: string;
-  slug: string;
-  cleanup: () => Promise<void>;
-}> {
-  const work = await tempDir('oap-cli-fixture-work-');
-  const bare = await tempDir('oap-cli-fixture-bare-');
-  const barePath = join(bare.root, 'remote.git');
-  await git(['init', '--bare', barePath]);
-  await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], barePath);
-  await git(['init', '-b', 'main', work.root]);
-  await git(['config', 'user.email', 'a@b.c'], work.root);
-  await git(['config', 'user.name', 'Test'], work.root);
-  for (const [rel, content] of Object.entries(files)) {
-    const target = join(work.root, rel);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, content, 'utf8');
-  }
-  await git(['add', '-A'], work.root);
-  await git(['commit', '-m', 'init'], work.root);
-  await git(['remote', 'add', 'origin', barePath], work.root);
-  await git(['push', '-u', 'origin', 'main'], work.root);
-  const source = `file://${barePath}`;
+/** Queued answers for the mocked `confirm` prompt (in order of calls). */
+const confirmAnswers = vi.hoisted(() => ({ queue: [] as boolean[] }));
+vi.mock('./prompts.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./prompts.js')>();
   return {
-    source,
-    slug: slugOf(source),
-    cleanup: async () => {
-      await work.cleanup();
-      await bare.cleanup();
-    },
+    ...actual,
+    confirm: vi.fn(async () => confirmAnswers.queue.shift() ?? false),
   };
-}
-
-/** Writes the fixture plugin into a working tree. */
-async function writePlugin(work: string, version: string): Promise<void> {
-  await mkdir(join(work, 'skills', 'hello'), { recursive: true });
-  await writeFile(
-    join(work, 'plugin.json'),
-    JSON.stringify(
-      {
-        $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
-        name: 'hello',
-        version,
-        description: 'Test plugin',
-      },
-      undefined,
-      2,
-    ),
-    'utf8',
-  );
-  await writeFile(join(work, 'skills', 'hello', 'SKILL.md'), skillMd('hello', 'Hi'), 'utf8');
-  await writeFile(
-    join(work, 'mcp.json'),
-    JSON.stringify({
-      $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
-      mcpServers: { echo: { type: 'stdio', command: 'echo', args: ['--ping'] } },
-    }),
-    'utf8',
-  );
-}
+});
 
 let work = '';
 let bare = '';
@@ -104,18 +47,18 @@ beforeAll(async () => {
   // Set up the git fixture: working tree + bare remote.
   work = (await tempDir('oap-cli-work-')).root;
   bare = join((await tempDir('oap-cli-bare-')).root, 'remote.git');
-  await git(['init', '--bare', bare]);
-  await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], bare);
-  await git(['init', '-b', 'main', work]);
-  await git(['config', 'user.email', 'a@b.c'], work);
-  await git(['config', 'user.name', 'Test'], work);
-  await writePlugin(work, '1.0.0');
-  await git(['add', '-A'], work);
-  await git(['commit', '-m', 'init'], work);
-  await git(['remote', 'add', 'origin', bare], work);
-  await git(['push', '-u', 'origin', 'main'], work);
-  await git(['tag', 'v1.0.0'], work);
-  await git(['push', '--tags'], work);
+  await gitCmd(['init', '--bare', bare]);
+  await gitCmd(['symbolic-ref', 'HEAD', 'refs/heads/main'], bare);
+  await gitCmd(['init', '-b', 'main', work]);
+  await gitCmd(['config', 'user.email', 'a@b.c'], work);
+  await gitCmd(['config', 'user.name', 'Test'], work);
+  await writePluginTree(work, '1.0.0');
+  await gitCmd(['add', '-A'], work);
+  await gitCmd(['commit', '-m', 'init'], work);
+  await gitCmd(['remote', 'add', 'origin', bare], work);
+  await gitCmd(['push', '-u', 'origin', 'main'], work);
+  await gitCmd(['tag', 'v1.0.0'], work);
+  await gitCmd(['push', '--tags'], work);
 
   const store = await tempDir('oap-cli-store-');
   dataHome = { root: store.root };
@@ -157,7 +100,7 @@ describe('CLI lifecycle', () => {
   });
 
   it('install aborts on fatal validation with nothing changed on disk (§5.12.1)', async () => {
-    const broken = await gitFixture({
+    const broken = await gitBareFixture({
       'plugin.json': '{ not json',
       'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
     });
@@ -207,6 +150,105 @@ describe('CLI lifecycle', () => {
     }
   });
 
+  it('install warns and asks before adding the loader entry, then registers on accept', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const scope = await tempDir('oap-cli-bootstrap-');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const freshPath = join(scope.root, 'opencode.json');
+      await writeFile(freshPath, '{"$schema": "https://opencode.ai/config.json"}', 'utf8');
+      // First confirm: add the loader entry; second: install the plugin.
+      confirmAnswers.queue.push(true, true);
+      const exitCode = await cmdInstall(argsOf('install', [plugin.root], ['--config', freshPath]));
+      expect(exitCode).toBe(0);
+      const text = await readFile(freshPath, 'utf8');
+      expect(text).toContain('opencode-agent-plugins');
+      expect(text).toContain(plugin.root);
+      expect(
+        err.mock.calls.some((call) => String(call[0]).includes('no "opencode-agent-plugins"')),
+      ).toBe(true);
+    } finally {
+      confirmAnswers.queue.length = 0;
+      err.mockRestore();
+      await plugin.cleanup();
+      await scope.cleanup();
+    }
+  });
+
+  it('install aborts without writing when the user declines the loader entry', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const scope = await tempDir('oap-cli-bootstrap-');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const freshPath = join(scope.root, 'opencode.json');
+      await writeFile(freshPath, '{"$schema": "https://opencode.ai/config.json"}', 'utf8');
+      confirmAnswers.queue.push(false);
+      const exitCode = await cmdInstall(argsOf('install', [plugin.root], ['--config', freshPath]));
+      expect(exitCode).toBe(1);
+      // Nothing was written: not even the config file's plugin array.
+      expect(await readFile(freshPath, 'utf8')).not.toContain(plugin.root);
+      expect(err.mock.calls.some((call) => String(call[0]).includes('aborted'))).toBe(true);
+    } finally {
+      confirmAnswers.queue.length = 0;
+      err.mockRestore();
+      await plugin.cleanup();
+      await scope.cleanup();
+    }
+  });
+
+  it('install --yes warns and auto-adds the loader entry', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const scope = await tempDir('oap-cli-bootstrap-');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const freshPath = join(scope.root, 'opencode.json');
+      await writeFile(freshPath, '{"$schema": "https://opencode.ai/config.json"}', 'utf8');
+      const exitCode = await cmdInstall(
+        argsOf('install', [plugin.root], ['--yes', '--config', freshPath]),
+      );
+      expect(exitCode).toBe(0);
+      const text = await readFile(freshPath, 'utf8');
+      expect(text).toContain('opencode-agent-plugins');
+      expect(
+        err.mock.calls.some((call) => String(call[0]).includes('no "opencode-agent-plugins"')),
+      ).toBe(true);
+      // No prompt was shown under --yes.
+      expect(confirmAnswers.queue.length).toBe(0);
+    } finally {
+      confirmAnswers.queue.length = 0;
+      err.mockRestore();
+      await plugin.cleanup();
+      await scope.cleanup();
+    }
+  });
+
+  it('install does not prompt when the loader entry already exists', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const scope = await tempDir('oap-cli-bootstrap-');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const freshPath = join(scope.root, 'opencode.json');
+      await writeFile(
+        freshPath,
+        '{"plugin": [["opencode-agent-plugins", { "plugins": [] }]]}',
+        'utf8',
+      );
+      const exitCode = await cmdInstall(
+        argsOf('install', [plugin.root], ['--yes', '--config', freshPath]),
+      );
+      expect(exitCode).toBe(0);
+      expect(confirmAnswers.queue.length).toBe(0);
+      expect(
+        err.mock.calls.some((call) => String(call[0]).includes('no "opencode-agent-plugins"')),
+      ).toBe(false);
+    } finally {
+      confirmAnswers.queue.length = 0;
+      err.mockRestore();
+      await plugin.cleanup();
+      await scope.cleanup();
+    }
+  });
+
   it('install --no-register prints a config snippet for a path source (§5.11)', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     try {
@@ -230,7 +272,7 @@ describe('CLI lifecycle', () => {
   });
 
   it('install --no-register prints a config snippet for a git source (§5.11)', async () => {
-    const fixture = await gitFixture({
+    const fixture = await gitBareFixture({
       'plugin.json': VALID_PLUGIN_JSON,
       'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
     });
@@ -308,10 +350,10 @@ describe('CLI lifecycle', () => {
     expect(exitCode).toBe(0);
 
     // Move the branch forward.
-    await writePlugin(work, '1.1.0');
-    await git(['add', '-A'], work);
-    await git(['commit', '-m', 'v1.1.0'], work);
-    await git(['push', 'origin', 'main'], work);
+    await writePluginTree(work, '1.1.0');
+    await gitCmd(['add', '-A'], work);
+    await gitCmd(['commit', '-m', 'v1.1.0'], work);
+    await gitCmd(['push', 'origin', 'main'], work);
 
     exitCode = await cmdCheck(argsOf('check', []));
     expect(exitCode).toBe(2);

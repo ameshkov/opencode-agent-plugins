@@ -19,7 +19,7 @@ live opencode instance. For architecture and contribution rules, see
 
 ## Prerequisites
 
-- **Node.js 22+** — the CLI targets Node ≥ 22; the plugin entrypoint runs
+- **Node.js 26+** — the CLI targets Node ≥ 26; the plugin entrypoint runs
   inside the opencode host. Verify with `node --version`.
 - **pnpm 10+** — the only supported package manager. Verify with
   `pnpm --version`.

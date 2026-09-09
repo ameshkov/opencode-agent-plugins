@@ -55,8 +55,14 @@ export interface Failure {
   extra?: Record<string, unknown>;
 }
 
-/** Maps every failure kind to its report level, per `docs/design.md` §6. */
-const FAILURE_LEVEL: Record<FailureKind, FailureLevel> = {
+/**
+ * Maps every failure kind to its report level, per `docs/design.md` §6.
+ *
+ * @internal Exported for tests only; not part of the public module API. The
+ * test suite iterates its keys to prove the level mapping is exhaustive for
+ * every declared kind, so the record can never drift from the union.
+ */
+export const FAILURE_LEVEL: Record<FailureKind, FailureLevel> = {
   'plugin-missing': 'error',
   'manifest-schema': 'error',
   'manifest-fatal': 'error',

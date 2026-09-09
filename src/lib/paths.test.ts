@@ -52,7 +52,7 @@ describe('resolveCommand', () => {
   });
 
   it('keeps a single token with no whitespace semantics', () => {
-    expect(resolveCommand('node --flag', ROOT).ok).toBe(false);
+    expect(resolveCommand('node --flag', ROOT)).toMatchObject({ ok: false, kind: 'invalid' });
   });
 
   it('resolves ./… against the root and rejects escapes', () => {
@@ -60,8 +60,12 @@ describe('resolveCommand', () => {
       ok: true,
       path: `${ROOT}/bin/serve.js`,
     });
-    expect(resolveCommand('../bin/serve.js', ROOT).ok).toBe(false);
-    expect(resolveCommand('/etc/passwd', ROOT).ok).toBe(false);
+    expect(resolveCommand('../bin/serve.js', ROOT)).toMatchObject({
+      ok: false,
+      kind: 'escape',
+      reason: 'command ../bin/serve.js escapes the plugin root',
+    });
+    expect(resolveCommand('/etc/passwd', ROOT)).toMatchObject({ ok: false, kind: 'invalid' });
   });
 });
 
@@ -86,13 +90,21 @@ describe('resolveCwd', () => {
   });
 
   it('rejects escapes both pre- and post-expansion', () => {
-    expect(resolveCwd('../outside', ROOT, DATA).ok).toBe(false);
-    expect(resolveCwd('${PLUGIN_ROOT}/../outside', ROOT, DATA).ok).toBe(false);
-    expect(resolveCwd('${PLUGIN_DATA}/../outside', ROOT, DATA).ok).toBe(false);
+    // Pre-expansion `../` is not an allowed form; post-expansion escapes that
+    // slip through a placeholder are true containment violations.
+    expect(resolveCwd('../outside', ROOT, DATA)).toMatchObject({ ok: false, kind: 'invalid' });
+    expect(resolveCwd('${PLUGIN_ROOT}/../outside', ROOT, DATA)).toMatchObject({
+      ok: false,
+      kind: 'escape',
+    });
+    expect(resolveCwd('${PLUGIN_DATA}/../outside', ROOT, DATA)).toMatchObject({
+      ok: false,
+      kind: 'escape',
+    });
   });
 
   it('rejects absolute and unknown forms', () => {
-    expect(resolveCwd('/etc', ROOT, DATA).ok).toBe(false);
-    expect(resolveCwd('${UNKNOWN}/x', ROOT, DATA).ok).toBe(false);
+    expect(resolveCwd('/etc', ROOT, DATA)).toMatchObject({ ok: false, kind: 'invalid' });
+    expect(resolveCwd('${UNKNOWN}/x', ROOT, DATA)).toMatchObject({ ok: false, kind: 'invalid' });
   });
 });

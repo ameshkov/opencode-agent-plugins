@@ -17,7 +17,7 @@
     "build"
   ],
   "engines": {
-    "node": ">=22",
+    "node": ">=26",
     "pnpm": ">=10"
   },
   "packageManager": "pnpm@10.14.0",
@@ -42,16 +42,16 @@
     "cli"
   ],
   "scripts": {
-    "build": "rm -rf build && tsc -p tsconfig.build.json && mkdir -p build/schemas && cp src/schemas/*.json build/schemas/ && node scripts/check-runtime-imports.mjs",
-    "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.test.json",
+    "build": "rm -rf build && tsc -p tsconfig.build.json && mkdir -p build/schemas && cp src/schemas/*.json build/schemas/ && node scripts/check-runtime-imports.ts && node scripts/check-failure-kinds.ts",
+    "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.test.json && tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.test-e2e.config.ts",
     "clean": "rm -rf node_modules build",
     "format:check": "prettier --check --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 '**/*.md'",
     "format:fix": "prettier --write --no-error-on-unmatched-pattern --cache . && markdownlint-cli2 --fix '**/*.md'",
-    "lint": "oxlint src test && pnpm knip",
-    "lint:fix": "oxlint src test --fix",
+    "lint": "oxlint src test scripts && pnpm knip",
+    "lint:fix": "oxlint src test scripts --fix",
     "knip": "knip --production",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
     "prepare": "husky || true"
@@ -62,7 +62,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.25",
+    "@opencode-ai/plugin": "1.18.30",
     "@types/node": "26.4.0",
     "husky": "9.1.7",
     "knip": "6.34.0",

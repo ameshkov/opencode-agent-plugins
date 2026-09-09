@@ -2,8 +2,6 @@
  * Shared CLI output helpers.
  */
 
-import type { OpResult } from '../lib/install.js';
-
 /**
  * Prints the config-file announcement carried by a successful result (§5.11).
  *
@@ -11,10 +9,10 @@ import type { OpResult } from '../lib/install.js';
  * preferred over `opencode.json`, the result carries a note so the user knows
  * which file was changed.
  *
- * @param result - A successful operation result.
+ * @param result - A successful operation result (only `configNote` is read).
  */
-export function printConfigNote(result: OpResult): void {
-  if (result.ok && result.configNote !== undefined) {
+export function printConfigNote(result: { configNote?: string }): void {
+  if (result.configNote !== undefined) {
     console.log(result.configNote);
   }
 }

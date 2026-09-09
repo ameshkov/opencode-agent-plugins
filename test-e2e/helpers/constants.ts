@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** Release under test; overridable, must match the @opencode-ai/plugin pin. */
-export const OPENCODE_VERSION = process.env['OPENCODE_VERSION'] ?? '1.18.25';
+export const OPENCODE_VERSION = process.env['OPENCODE_VERSION'] ?? '1.18.30';
 
 /** Image name shared by the build and the per-test containers. */
 export const IMAGE_NAME = `opencode-agent-plugins-e2e:${OPENCODE_VERSION}`;

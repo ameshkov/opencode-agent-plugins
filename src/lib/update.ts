@@ -25,6 +25,8 @@ import {
 } from './store.js';
 import { parseSource, type ParsedSource } from './resolve.js';
 import { validatePluginTree } from './validate.js';
+import type { Failure } from './errors.js';
+import { failure } from './errors.js';
 
 /** Outcome of one plugin in a `check` / `update` run. */
 type UpdateStatusKind =
@@ -50,6 +52,12 @@ export interface UpdateStatus {
   status: UpdateStatusKind;
   /** Extra explanation (unreachable error, moved-tag hint, ...). */
   detail?: string;
+  /**
+   * Taxonomy classification of failure statuses (§6 rows 807-808):
+   * `check-unreachable` for `unreachable`, `update-ref` for `moved-tag`.
+   * Absent for statuses that are not failures.
+   */
+  failure?: Failure;
 }
 
 /**
@@ -104,14 +112,7 @@ async function checkEntry(entry: StoreEntry): Promise<UpdateStatus> {
   const meta = entry.meta;
   const resolvedRef = await resolveRemoteRef(meta.url, meta.ref);
   if (!resolvedRef.ok) {
-    return {
-      slug: entry.slug,
-      source: meta.source,
-      ref: meta.ref,
-      installedCommit: meta.resolvedCommit,
-      status: 'unreachable',
-      detail: resolvedRef.error,
-    };
+    return unreachableStatus(entry.slug, meta, resolvedRef.error);
   }
   const moved = resolvedRef.commit !== meta.resolvedCommit;
   const base = {
@@ -129,7 +130,7 @@ async function checkEntry(entry: StoreEntry): Promise<UpdateStatus> {
   }
   if (resolvedRef.kind === 'tag') {
     return moved
-      ? { ...base, status: 'moved-tag' as const, detail: 'tag moved; update requires --force' }
+      ? movedTagStatus(entry.slug, meta)
       : {
           ...base,
           status: 'up-to-date' as const,
@@ -213,7 +214,7 @@ export async function applyUpdates(
     }
     const resolvedRef = await resolveRemoteRef(meta.url, meta.ref);
     if (!resolvedRef.ok) {
-      statuses.push(statusFor(entry.slug, meta, 'unreachable', resolvedRef.error));
+      statuses.push(unreachableStatus(entry.slug, meta, resolvedRef.error));
       continue;
     }
     const moved = resolvedRef.commit !== meta.resolvedCommit;
@@ -222,7 +223,7 @@ export async function applyUpdates(
       continue;
     }
     if (resolvedRef.kind === 'tag' && !options.force) {
-      statuses.push(statusFor(entry.slug, meta, 'moved-tag', 'tag moved; update requires --force'));
+      statuses.push(movedTagStatus(entry.slug, meta));
       continue;
     }
     statuses.push(await swapUpdate(entry.slug, meta, resolvedRef.commit, env));
@@ -239,7 +240,7 @@ async function swapUpdate(
 ): Promise<UpdateStatus> {
   const staged = await stageTree(meta.url, meta.ref, newCommit);
   if (!staged.ok) {
-    return statusFor(slug, meta, 'unreachable', staged.error);
+    return unreachableStatus(slug, meta, staged.error);
   }
   const validated = await validatePluginTree(staged.dir, dataDirForKey(slug, env));
   if (validated.fatal) {
@@ -288,6 +289,7 @@ function statusFor(
   meta: StoreMeta,
   status: UpdateStatusKind,
   detail?: string,
+  f?: Failure,
 ): UpdateStatus {
   return {
     slug,
@@ -296,7 +298,40 @@ function statusFor(
     installedCommit: meta.resolvedCommit,
     status,
     ...(detail === undefined ? {} : { detail }),
+    ...(f === undefined ? {} : { failure: f }),
   };
+}
+
+/** Taxonomy failure for the §6 `check-unreachable` row (remote unreachable). */
+function unreachableFailure(slug: string, source: string, detail: string): Failure {
+  return failure('check-unreachable', `remote unreachable: ${detail}`, { slug, source });
+}
+
+/** Taxonomy failure for the §6 `update-ref` row (moved tag, needs --force). */
+function movedTagFailure(slug: string, source: string): Failure {
+  return failure('update-ref', 'tag moved; update requires --force', { slug, source });
+}
+
+/** Builds an `unreachable` status carrying its `check-unreachable` classification. */
+function unreachableStatus(slug: string, meta: StoreMeta, detail: string): UpdateStatus {
+  return statusFor(
+    slug,
+    meta,
+    'unreachable',
+    detail,
+    unreachableFailure(slug, meta.source, detail),
+  );
+}
+
+/** Builds a `moved-tag` status carrying its `update-ref` classification. */
+function movedTagStatus(slug: string, meta: StoreMeta): UpdateStatus {
+  return statusFor(
+    slug,
+    meta,
+    'moved-tag',
+    'tag moved; update requires --force',
+    movedTagFailure(slug, meta.source),
+  );
 }
 
 /** Swaps a staged tree into place with `.old-<slug>` rollback. */

@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyRegisterSource,
   applyRemoveSource,
+  configHasPluginTuple,
   configPreferenceNote,
   configSourcesOf,
   ConfigEditError,
   PLUGIN_TUPLE_NAME,
+  probeConfig,
   resolveConfigFile,
   saveConfig,
 } from './config-file.js';
@@ -107,6 +109,67 @@ describe('configSourcesOf', () => {
     // Plain string entries are plugin names, not sources.
     expect(sources).toEqual(['./agent-plugins/x']);
     expect(configSourcesOf('{"plugin": ["plain"]}')).toEqual([]);
+  });
+});
+
+describe('configHasPluginTuple', () => {
+  it('detects the loader tuple when present', () => {
+    expect(configHasPluginTuple(WITH_TUPLE)).toBe(true);
+  });
+
+  it('reports false for a config with only other plugin entries', () => {
+    expect(configHasPluginTuple(WITH_COMMENTS)).toBe(false);
+    expect(configHasPluginTuple('{"plugin": ["some-other-plugin"]}')).toBe(false);
+  });
+
+  it('reports false when the plugin array or tuple is missing', () => {
+    expect(configHasPluginTuple('{"$schema": "https://opencode.ai/config.json"}')).toBe(false);
+    expect(configHasPluginTuple('{}')).toBe(false);
+  });
+
+  it('reports false for malformed or empty configs', () => {
+    expect(configHasPluginTuple('')).toBe(false);
+    expect(configHasPluginTuple('{ invalid')).toBe(false);
+  });
+});
+
+describe('probeConfig', () => {
+  it('reports the tuple presence for a custom config file', async () => {
+    const dir = await tempDir('oap-cfg-probe-');
+    try {
+      const path = join(dir.root, 'opencode.jsonc');
+      await writeFile(path, WITH_TUPLE, 'utf8');
+      const probe = await probeConfig({ kind: 'custom', path });
+      expect(probe.path).toBe(path);
+      expect(probe.jsoncWins).toBe(false);
+      expect(probe.hasTuple).toBe(true);
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('reports hasTuple false when the config has no loader tuple', async () => {
+    const dir = await tempDir('oap-cfg-probe-');
+    try {
+      const path = join(dir.root, 'opencode.json');
+      await writeFile(path, '{"$schema": "https://opencode.ai/config.json"}', 'utf8');
+      const probe = await probeConfig({ kind: 'custom', path });
+      expect(probe.hasTuple).toBe(false);
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('reports hasTuple false when the config file does not exist', async () => {
+    const dir = await tempDir('oap-cfg-probe-');
+    try {
+      const path = join(dir.root, 'opencode.json');
+      const probe = await probeConfig({ kind: 'custom', path });
+      expect(probe.path).toBe(path);
+      expect(probe.hasTuple).toBe(false);
+    } finally {
+      await dir.cleanup();
+    }
   });
 });
 

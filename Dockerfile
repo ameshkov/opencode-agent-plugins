@@ -15,7 +15,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Install dependencies
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 
 # The unit-test gate runs real git (the CLI tests build an actual bare
 # repository for install/update fixtures), and the slim base image does not

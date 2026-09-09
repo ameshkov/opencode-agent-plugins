@@ -209,20 +209,15 @@ opencode (config hook)                    CLI (opencode-agent-plugins bin)
    │  config (mutable) + options              │  install | remove | check | update | list
    ▼                                          ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    src/lib/ (no opencode deps)                   │
-│  resolve.ts    source parsing (path | git URL [#ref]) + store    │
-│  install.ts    clone/validate/stage/swap (git + config editing)  │
-│  store.ts      client store layout + metadata (meta/<slug>.json) │
-│  manifest.ts   plugin.json parse + validation (Ajv, vendored)    │
-│  paths.ts      containment checks + placeholder expansion        │
-│  skills.ts     discover skills/*/SKILL.md, validate names        │
-│  mcp.ts        mcp.json parse/validate, translate to opencode    │
-│  data.ts       PLUGIN_DATA dir management                        │
-│  errors.ts     failure taxonomy types (shared by both)           │
+│          shared core: one module per spec concern                │
+│  source resolution   install/update lifecycle   client store     │
+│  manifest validation skills discovery           mcp translation  │
+│  containment + placeholder expansion            PLUGIN_DATA      │
+│  failure taxonomy (types shared by both)                         │
 └───────────────────┬────────────────────────────┬─────────────────┘
                     ▼                            ▼
-        src/index.ts (opencode Plugin)   src/cli/index.ts (bin)
-        wraps lib with input.client       wraps lib with stdio prompts
+        plugin entry (opencode Plugin)    CLI entry (bin)
+        wraps core with input.client       wraps core with stdio prompts
         ──────────────┴──────────────────────────┴──────────────
                     ▼
         config.skills.paths += <pluginRoot>/skills
@@ -230,7 +225,7 @@ opencode (config hook)                    CLI (opencode-agent-plugins bin)
         (PLUGIN_DATA dirs created when stdio servers are registered)
 ```
 
-The library (`src/lib/`) is the single implementation of validation, translation,
+The shared core is the single implementation of validation, translation,
 and store management; the Opencode plugin and the CLI are thin wrappers — the CLI
 validates exactly what the plugin will load, so `install` can never register
 something the plugin would reject.
@@ -243,58 +238,37 @@ code path (see §6).
 
 ```text
 opencode-agent-plugins/
-├── package.json            # ESM, main: build/index.js, bin: { opencode-agent-plugins }
-├── tsconfig.json / tsconfig.build.json
-├── vitest.config.ts
 ├── src/
-│   ├── index.ts            # plugin entry: (input, options) => Hooks
-│   ├── register.ts         # config-hook pipeline: resolve → validate → register
-│   ├── cli/index.ts        # CLI entry (bin opencode-agent-plugins)
-│   ├── options.ts          # Zod schema for the plugin options object
-│   ├── lib/                # shared core - no @opencode-ai deps, pure node
-│   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
-│   │   ├── install.ts      # install/update/remove operations (git + swap + config edit)
-│   │   ├── update.ts       # check/update lifecycle (staging → validate → swap)
-│   │   ├── git.ts          # git availability, ls-remote, ref resolution
-│   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
-│   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
-│   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
-│   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
-│   │   ├── mcp.ts          # mcp.json validation + translation
-│   │   ├── remote.ts       # remote URL/header rule checks (§7.2.1)
-│   │   ├── skills.ts       # skill discovery + validation
-│   │   ├── frontmatter.ts  # minimal YAML frontmatter parser for SKILL.md
-│   │   ├── paths.ts        # containment + ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion
-│   │   ├── data.ts         # PLUGIN_DATA layout + creation
-│   │   ├── doctor.ts       # store/config drift report + prune
-│   │   ├── validate.ts     # shared "would register" pipeline (install preview)
-│   │   └── errors.ts       # failure taxonomy types
-│   └── schemas/
-│       ├── 1.0.0-plugin.schema.json   # vendored (imported via createRequire, never fetched)
-│       └── 1.0.0-mcp.schema.json
-├── scripts/update-schemas.mjs  # dev-only: verify/re-download vendored schemas
-└── test/
-    ├── fixtures/           # spec-derived valid/invalid plugin packages
-    ├── cli/                # install/update/remove flows against local git fixtures
-    └── *.test.ts
+│   ├── plugin entry             # (input, options) => Hooks
+│   ├── CLI                      # the opencode-agent-plugins binary
+│   ├── lib/                     # shared core: one module per spec concern
+│   └── schemas/                 # vendored Agent Plugins schemas (committed)
+├── scripts/                     # build/dev gates (schema sync, import checks)
+├── test/                        # unit/integration test support (helpers, stub client)
+└── test-e2e/                    # Docker E2E suite against a real opencode
 ```
+
+The exact file split is left to the implementation — what is pinned here is
+that the shared core is a single module layer below both entrypoints with one
+module per spec concern (§4, §6), and that the vendored schemas are committed
+artifacts, never fetched at runtime (§5.4).
 
 ### 4.2 Technical design: language, entrypoints, packaging
 
 **Language and build.** The tool is written in **TypeScript** (ESM, compiled with
-`tsc -p tsconfig.build.json` to `build/`; no bundler — mirrors the `opencode-sdd`
+`tsc` to `build/`; no bundler — mirrors the `opencode-sdd`
 layout). Target runtimes: **Bun** for the plugin entrypoint (Opencode's plugin
-loader) and **Node ≥ 22** for the CLI; `src/lib/` code sticks to the portable
+loader) and **Node ≥ 26** for the CLI; shared-core code sticks to the portable
 intersection (`node:*` builtins only — no Bun-only APIs — so both runtimes run
 the same compiled output).
 
 **Two entrypoints, one package.** The npm package exposes exactly two
-entrypoints, both thin wrappers over `src/lib/`:
+entrypoints, both thin wrappers over the shared core:
 
-| # | Entrypoint | Source → output | Contract | Runtime |
+| # | Entrypoint | Output | Contract | Runtime |
 | --- | --- | --- | --- | --- |
-| 1 | Opencode plugin | `src/index.ts` → `build/index.js` | Default-exports a `Plugin` (`(input, options) => Hooks`); only the `config` hook is used (§5.1). Zero top-level side effects (§5.1 import-safety note). | Bun (inside Opencode) |
-| 2 | CLI | `src/cli/index.ts` → `build/cli/index.js` | `package.json` `bin: { "opencode-agent-plugins": "build/cli/index.js" }` with a `#!/usr/bin/env node` shebang; command surface in §5.11. | Node ≥ 22 |
+| 1 | Opencode plugin | `build/index.js` | Default-exports a `Plugin` (`(input, options) => Hooks`); only the `config` hook is used (§5.1). Zero top-level side effects (§5.1 import-safety note). | Bun (inside Opencode) |
+| 2 | CLI | `build/cli/index.js` | Exposed as the `opencode-agent-plugins` bin with a `#!/usr/bin/env node` shebang; command surface in §5.11. | Node ≥ 26 |
 
 ```jsonc
 // package.json (excerpt)
@@ -310,9 +284,10 @@ entrypoints, both thin wrappers over `src/lib/`:
 
 Dependency boundaries:
 
-- `src/lib/` imports only `node:*`, Ajv, Zod, and `jsonc-parser` — **never**
-  `@opencode-ai/*`, so the CLI installs and runs with no Opencode dependency.
-- `src/index.ts` uses `@opencode-ai/plugin` as a **type-only** import
+- The shared core imports only `node:*`, Ajv, Zod, and `jsonc-parser` —
+  **never** `@opencode-ai/*`, so the CLI installs and runs with no Opencode
+  dependency.
+- The plugin entry uses `@opencode-ai/plugin` as a **type-only** import
   (`import type { Plugin, Hooks }`), so it stays a devDependency and nothing
   Opencode-specific ends up in the CLI's module graph.
 
@@ -332,7 +307,7 @@ considered and rejected for v1:
   installing `opencode-agent-plugins` the plugin) — two published packages
   would invite version skew between them.
 - The separation a workspace would enforce already exists as a module boundary:
-  `src/lib/` has no Opencode imports, and a lint rule (or a test that walks the
+  the shared core has no Opencode imports, and a lint rule (or a test that walks the
   CLI's import graph) pins that. If the core ever gains independent consumers,
   it can be extracted into its own package later (§12).
 
@@ -340,7 +315,7 @@ considered and rejected for v1:
 
 ## 5. Component design
 
-### 5.1 Entry point (`index.ts`)
+### 5.1 Entry point
 
 ```ts
 import type { Plugin, Hooks } from "@opencode-ai/plugin";
@@ -370,11 +345,11 @@ Defensive note: `config.skills` may be missing from the TS type of the installed
 SDK version; the code normalizes it (`config.skills ??= { paths: [] }`) and treats
 the runtime schema (`opencode.ai/config.json`) as authoritative.
 
-### 5.2 Options (`options.ts`)
+### 5.2 Options
 
 Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 
-### 5.3 Plugin sources & resolution (`resolve.ts` + `store.ts`)
+### 5.3 Plugin sources & resolution
 
 #### 5.3.1 Source grammar
 
@@ -438,18 +413,18 @@ set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
 Future sources (explicit enum in the parser, not implemented in v1): `file://`
 URLs, npm package names, monorepo subpath selection (`#ref:subdir`).
 
-### 5.4 Manifest validation (`manifest.ts`)
+### 5.4 Manifest validation
 
 - **Schemas vendored, never fetched** (§5.2: "Clients MUST NOT retrieve a schema
   while loading a plugin"). The two JSON schemas are committed under
-  `src/schemas/`, copied into `build/schemas/` by the build, and loaded at
-  runtime via `createRequire` (never fetched); `scripts/update-schemas.mjs`
+  the schemas directory, copied into `build/` by the build, and loaded at
+  runtime via `createRequire` (never fetched); the dev-only schema-sync script
   verifies their hashes against `agent-plugins.org/schemas/1.0.0/...` in CI
   (dev-time only; runtime is offline).
 - Validated with Ajv. The vendored schemas are verified to actually encode
   closedness (`additionalProperties: false` / `unevaluatedProperties: false`) —
   the report-and-ignore reclassification below is meaningless against an open
-  schema; `scripts/update-schemas.mjs` asserts this when re-vendoring.
+  schema; the schema-sync script asserts this when re-vendoring.
   Validation order: strip unknown top-level keys first, then validate the
   remainder, so a fatal error in a known field is never masked by the presence
   of unknown ones. Error classification:
@@ -465,7 +440,7 @@ URLs, npm package names, monorepo subpath selection (`#ref:subdir`).
   validating their contents (§8.1). Recorded for a future
   `com.ameshkov.opencode-agent-plugins` namespace (see §12).
 
-### 5.5 Path containment (`paths.ts`)
+### 5.5 Path containment
 
 Single helper used by manifest, skills, and MCP processing:
 
@@ -488,11 +463,16 @@ Rules enforced:
   not interpret them as package paths"); rejection happens only for `cwd` and
   `command`.
 
-### 5.6 Skills (`skills.ts`)
+### 5.6 Skills
 
 - Discovery: immediate children of `<root>/skills/` that are directories containing
   a regular file named exactly `SKILL.md`. No recursion. Missing `skills/` → valid
   absence (no error).
+- Containment (§5.5): the `skills/` dir *and* each immediate skill subdirectory
+  must resolve (realpath) inside the resolved plugin root. A symlinked entry
+  pointing outside the tree is a `path-escape` (`warn`) and disables the whole
+  `skills/` registration for that plugin — registration is directory-granular,
+  so if any subdirectory escapes, none of the dir may be exposed.
 - Per-skill validation against Agent Skills + Opencode's loader requirements:
     - YAML frontmatter parseable; `name` and `description` present and non-empty.
     - `name` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 64 chars, and equals the directory
@@ -523,7 +503,7 @@ Rules enforced:
   dir (with a warning naming the skill), mirroring §5.7's `mcp` override
   semantics.
 
-### 5.7 MCP translation (`mcp.ts`)
+### 5.7 MCP translation
 
 Portable format → Opencode native mapping:
 
@@ -578,7 +558,7 @@ Details:
   appear); our logs report the registration-time drops (invalid entry, unsupported
   transport).
 
-### 5.8 `PLUGIN_DATA` (`data.ts`)
+### 5.8 `PLUGIN_DATA`
 
 - Layout: `<data-home>/opencode/agent-plugins/data/<key>/` (see §5.3.2 for
   `<data-home>` resolution). The key is chosen per source kind:
@@ -611,22 +591,22 @@ Details:
 - `mcp.json` `$schema` must be recognized **and** match the `plugin.json` version;
   mismatch → MCP disabled for that plugin, skills still load (§7.2.2 rule 2).
 
-### 5.10 Logging (`logger.ts`) and errors (`errors.ts`)
+### 5.10 Logging and errors
 
 - Every notice goes through `client.app.log({ service: "opencode-agent-plugins", level, message, extra })`; structured `extra` carries plugin name, component type, and spec section reference (e.g. `§5.5`).
 - Error taxonomy types mirror the spec's failure boundary ladder, so tests can assert exact classifications (§6).
 
-### 5.11 CLI interface (`cli/index.ts`)
+### 5.11 CLI interface
 
 The same npm package exposes a CLI (`"bin": { "opencode-agent-plugins": "build/cli/index.js" }`)
 that manages the plugin store and the user's Opencode config. It runs on Node
-(≥22) **outside** Opencode. The `git` binary is required only by git-backed
+(≥26) **outside** Opencode. The `git` binary is required only by git-backed
 commands (`install` from a URL, `check`, `update`, and `list`'s status column)
 and is checked lazily when such a command runs — `remove`, `doctor`, and
 path-sourced `install` work on machines without git, while `list` still
 completes and reports every git-sourced plugin as `unreachable` when it
 cannot resolve the recorded ref (its status is classified exactly like
-`check`). It shares `src/lib/` with the
+`check`). It shares validation and store logic with the
 plugin, so install-time validation is byte-identical to what the plugin will do.
 
 | Command | What it does |
@@ -657,10 +637,22 @@ Behavior notes:
   committing `opencode.json.bak` into the user's repo — and re-parsed before
   writing to guarantee the result is valid: a CLI can never leave Opencode with a
   corrupt config (§5.12.4).
+- **Loader-entry bootstrap** (`install`): registering a source is inert
+  unless the config already contains the `["opencode-agent-plugins", {…}]`
+  loader tuple — without it Opencode never loads the loader, so the
+  registered source is never resolved. When the resolved config has no
+  loader tuple, `install` therefore probes it first (read-only,
+  `probeConfig`), warns the user, and — in interactive mode — asks whether
+  to add the entry to the opencode config before registering; declining
+  aborts the whole install with nothing written (the staged git tree is
+  dropped). Under `--yes` the entry is added automatically with the warning
+  only (skipping confirmation prompts). Existing configs that already have
+  the tuple are never re-prompted.
 - The registered value is the **original source string** exactly as given (git
   URL including any `#ref`, or the local path) — the startup resolver (§5.3.3)
   maps it back to the store entry. We never register store-internal paths.
-- **`--no-register`**: installs and prints the config snippet to add manually.
+- **`--no-register`**: installs and prints the config snippet to add manually
+  (no loader-entry check — nothing is edited).
 - The CLI never touches a running Opencode process.
 
 ### 5.12 Install / update / remove lifecycle
@@ -741,6 +733,10 @@ Ref semantics:
 - Path sources are reported as *"local path — update by editing the source"*.
 - Failure (unreachable host, auth failure, invalid new manifest, swap failure)
   aborts with the previous install untouched and nothing half-applied.
+- Failure statuses carry the §6 taxonomy classification as structured
+  `UpdateStatus.failure` records: `unreachable` is a `check-unreachable` and a
+  moved tag an `update-ref` — both `warn` per §6 rows 807-808. Non-failure
+  statuses carry none.
 
 #### 5.12.4 How Opencode learns about changes — and can they break it?
 
@@ -816,7 +812,7 @@ Map to the [client implementers checklist](https://agent-plugins.org/client-impl
 
 | Checklist item | Design | Test |
 | --- | --- | --- |
-| Load a plugin from a directory & enforce filesystem-resolved package boundary | §5.3, §5.5 | `resolve.ts`, `paths.ts` unit tests |
+| Load a plugin from a directory & enforce filesystem-resolved package boundary | §5.3, §5.5 | source-resolution + containment unit tests |
 | Select locally supported manifest rules from `$schema`; no schema retrieval during load | §5.4 | fixture with unreachable-network assertion (validators never fetch) |
 | Validate closed `plugin.json` schema + required `$schema`/`name` | §5.4 | Ajv-based tests, spec examples |
 | Report and ignore unknown top-level fields | §5.4 | fixture from §5.2 spec example |
@@ -854,7 +850,7 @@ these, the E2E test (§9.2) is the tripwire.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Language/build | TypeScript, ESM, `tsc` → `build/` (mirrors `opencode-sdd` layout, `@opencode-ai/plugin` d.ts import) | Plugins are consumed by Bun; no bundler needed (§4.2) |
-| Entrypoints | Two per package: opencode plugin (`main`/`exports["."]`) + CLI (`bin`); both thin wrappers over `src/lib/` | §4.2 |
+| Entrypoints | Two per package: opencode plugin (`main`/`exports["."]`) + CLI (`bin`); both thin wrappers over the shared core | §4.2 |
 | Packaging | Single npm package, **not** a multi-package workspace | Plugin + CLI must version/publish together; lib boundary enforced by module graph (§4.2) |
 | Validation | Ajv with the two vendored JSON schemas | Exact spec fidelity; per-entry validation via `#/$defs/server`; no network |
 | Options parsing | Zod | Small, typed; mirrors `@opencode-ai/plugin` `tool.schema` style |
@@ -866,7 +862,11 @@ these, the E2E test (§9.2) is the tripwire.
 
 ## 9. Testing strategy
 
-### 9.1 Empirical verification (proven, 2026-09-01, opencode 1.18.25)
+### 9.1 Empirical verification (proven, 2026-09-09, opencode 1.18.30)
+
+The E2E suite (§9.2.4) was re-run against opencode 1.18.30 in full
+(5 scenarios, 21 assertions) and passes; the findings below were first
+established on opencode 1.18.25 and remain current.
 
 The core mechanism was **empirically proven** end-to-end: a plugin loaded as
 `["/path/to/loader.mjs", { plugins: "<dir>" }]` was run against a real Opencode
@@ -1025,7 +1025,7 @@ Findings that adjust the design:
 ## 12. Future work
 
 - npm registry / `file://` sources; monorepo subpath selection (`#ref:subdir`).
-- Extract `src/lib/` into a standalone core package (and reconsider a
+- Extract the shared core into a standalone core package (and reconsider a
   multi-package workspace, §4.2) if the client core gains consumers beyond this
   repo.
 - Hot reload: have the CLI (or a `--reload` flag) ask a running Opencode to

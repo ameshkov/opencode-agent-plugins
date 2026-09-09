@@ -13,8 +13,7 @@
 //   3. Writes the downloaded bytes to src/schemas/ (only if they changed or
 //      the file is missing), and reports a summary.
 //
-// Run manually: `node scripts/update-schemas.mjs`. Intended to be run in CI
-// to verify the vendored copies match the canonical ones.
+// Run manually: `node scripts/update-schemas.ts`.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +22,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const schemasDir = resolve(here, '..', 'src', 'schemas');
 
 /** Maps vendored file name -> canonical URL. */
-const SCHEMAS = {
+const SCHEMAS: Record<string, string> = {
   '1.0.0-plugin.schema.json': 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
   '1.0.0-mcp.schema.json': 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
 };
@@ -41,23 +40,34 @@ const SCHEMAS = {
  * @param schema - Parsed schema object.
  * @throws {Error} When an object node is implicitly open.
  */
-function assertClosedness(name, schema) {
-  const check = (label, node) => {
-    if (typeof node !== 'object' || node === null) return;
+function assertClosedness(name: string, schema: { $defs?: Record<string, unknown> }): void {
+  const check = (label: string, node: unknown): void => {
+    if (typeof node !== 'object' || node === null) {
+      return;
+    }
+    const record = node as Record<string, unknown>;
     for (const key of ['oneOf', 'anyOf', 'allOf']) {
-      if (Array.isArray(node[key])) {
-        node[key].forEach((branch, i) => check(`${label}.${key}[${i}]`, branch));
+      const branches = record[key];
+      if (Array.isArray(branches)) {
+        branches.forEach((branch, branchIndex) => {
+          check(`${label}.${key}[${branchIndex}]`, branch);
+        });
       }
     }
-    const isObjectNode = node['type'] === 'object' || node['properties'] !== undefined;
-    if (!isObjectNode) return;
-    const closed =
-      node['additionalProperties'] === false || node['unevaluatedProperties'] === false;
-    if (closed) return;
-    const additional = node['additionalProperties'];
-    const isValueMap =
-      typeof additional === 'object' && additional !== null && additional !== false;
-    if (isValueMap) return;
+    const isObjectNode = record['type'] === 'object' || record['properties'] !== undefined;
+    if (!isObjectNode) {
+      return;
+    }
+    if (record['additionalProperties'] === false || record['unevaluatedProperties'] === false) {
+      return;
+    }
+    const additional = record['additionalProperties'];
+    // A schema object as `additionalProperties` is an intentional value map
+    // (e.g. a string map); `false` closes the node (handled above); `true`
+    // would leave it open — only the object form is exempt.
+    if (typeof additional === 'object' && additional !== null) {
+      return;
+    }
     throw new Error(
       `${name}: "${label}" is not closed ` +
         '(additionalProperties / unevaluatedProperties must be false)',
@@ -77,7 +87,7 @@ for (const [fileName, url] of Object.entries(SCHEMAS)) {
     throw new Error(`failed to fetch ${url}: HTTP ${response.status}`);
   }
   const bytes = Buffer.from(await response.arrayBuffer());
-  const schema = JSON.parse(bytes.toString('utf8'));
+  const schema = JSON.parse(bytes.toString('utf8')) as { $defs?: Record<string, unknown> };
   assertClosedness(fileName, schema);
 
   const target = resolve(schemasDir, fileName);

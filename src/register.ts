@@ -263,7 +263,54 @@ async function loadAndValidatePlugin(
   for (const warning of mcpResult.failures) {
     await reportFailure(warning, logger, { plugin: manifest.name });
   }
+  await reportAbsentComponents(manifest, skillResult, mcpResult, logger);
   return { manifest, skillResult, mcpResult };
+}
+
+/**
+ * Reports §6 valid-absence conditions at debug level: missing `skills/`,
+ * missing `mcp.json`, and unimplemented extension namespaces. All three are
+ * valid, non-fatal states (the plugin keeps loading), so they stay silent at
+ * the default info threshold and are only visible with `logLevel: "debug"`.
+ *
+ * @param manifest - The validated plugin manifest.
+ * @param skillResult - The plugin's skills discovery result.
+ * @param mcpResult - The plugin's MCP discovery result.
+ * @param logger - Plugin logger.
+ */
+async function reportAbsentComponents(
+  manifest: ManifestData,
+  skillResult: SkillDiscovery,
+  mcpResult: McpDiscovery,
+  logger: Logger,
+): Promise<void> {
+  if (skillResult.missing) {
+    await reportFailure(
+      failure('skills-missing', 'no skills/ directory (valid absence)', {
+        plugin: manifest.name,
+      }),
+      logger,
+      { plugin: manifest.name },
+    );
+  }
+  if (mcpResult.status === 'absent') {
+    await reportFailure(
+      failure('mcp-missing', 'no mcp.json (valid absence)', { plugin: manifest.name }),
+      logger,
+      { plugin: manifest.name },
+    );
+  }
+  for (const namespace of Object.keys(manifest.extensions ?? {})) {
+    await reportFailure(
+      failure(
+        'extension-namespace',
+        `extension namespace "${namespace}" is not implemented; ignored`,
+        { plugin: manifest.name, namespace },
+      ),
+      logger,
+      { plugin: manifest.name },
+    );
+  }
 }
 
 /** Computes the PLUGIN_DATA key for a plugin instance. */

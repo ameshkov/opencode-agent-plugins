@@ -306,6 +306,60 @@ export function configSourcesOf(text: string): string[] {
   return out;
 }
 
+/**
+ * `true` when a config text contains a `["opencode-agent-plugins", {…}]`
+ * loader tuple (the entry that makes OpenCode load this package at startup).
+ *
+ * The CLI uses this before `install` registers a source: when the loader
+ * entry is absent, registering the source alone is inert (OpenCode never
+ * loads the loader plugin), so the CLI warns and offers to add the entry.
+ *
+ * @param text - Config text.
+ * @returns `true` when the loader tuple is present.
+ * @internal Exported for tests only; production callers go through
+ * {@link probeConfig}. Not part of the public module API.
+ */
+export function configHasPluginTuple(text: string): boolean {
+  const root = parseTree(text);
+  if (root === undefined || root.type !== 'object') {
+    return false;
+  }
+  const plugin = findPluginArray(root);
+  return plugin !== undefined && findTupleIndex(plugin) !== -1;
+}
+
+/** Result of probing the resolved config for the loader tuple (§5.11). */
+export interface ConfigProbe {
+  /** Absolute path of the resolved config file. */
+  path: string;
+  /** True when `opencode.jsonc` won over an existing `opencode.json`. */
+  jsoncWins: boolean;
+  /** True when the config contains the `["opencode-agent-plugins", {…}]` tuple. */
+  hasTuple: boolean;
+}
+
+/**
+ * Resolves and reads the config for a scope without writing anything.
+ *
+ * The CLI probes this before `install` registers a source: when the loader
+ * tuple is absent, registering the source alone would never be loaded by
+ * OpenCode, so the CLI warns and asks the user first (§5.11). A missing or
+ * unreadable config file reports `hasTuple: false` (the tuple cannot exist
+ * there; the config is created on registration).
+ *
+ * @param scope - Which config to inspect.
+ * @returns The resolved path plus whether the loader tuple is present.
+ */
+export async function probeConfig(scope: ConfigScope): Promise<ConfigProbe> {
+  const resolved = await resolveConfigFile(scope);
+  const text = await readFile(resolved.path, 'utf8').catch(() => null);
+  return {
+    path: resolved.path,
+    jsoncWins: resolved.jsoncWins,
+    hasTuple: text === null ? false : configHasPluginTuple(text),
+  };
+}
+
 /** Finds the position of the plugin tuple in the array (or -1). */
 function findTupleIndex(plugin: Node | undefined): number {
   if (plugin === undefined || plugin.children === undefined) {

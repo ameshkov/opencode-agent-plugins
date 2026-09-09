@@ -1,9 +1,10 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath, stat, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Config, PluginInput } from '@opencode-ai/plugin';
 import agentPlugins from './index.js';
 import { stubClient } from '../test/stub-client.js';
-import { skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
+import { skillMd, tempDir, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
 
 type RuntimeConfig = Config & {
   skills?: { paths: string[] };
@@ -66,6 +67,92 @@ describe('agentPlugins plugin', () => {
       expect(messages).toContain('plugin loading');
     } finally {
       await plugin.cleanup();
+    }
+  });
+
+  it('reports valid absences (missing skills/ and mcp.json) at debug level (§6)', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root], logLevel: 'debug' });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
+      const boundaries = logs.map(
+        (log) => (log.extra as { boundary?: string } | undefined)?.boundary,
+      );
+      expect(boundaries).toContain('skills-missing');
+      expect(boundaries).toContain('mcp-missing');
+      const skillAbsence = logs.find(
+        (log) => (log.extra as { boundary?: string } | undefined)?.boundary === 'skills-missing',
+      );
+      expect(skillAbsence?.level).toBe('debug');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('does not forward debug absence reports at the default info threshold', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
+      const boundaries = logs.map(
+        (log) => (log.extra as { boundary?: string } | undefined)?.boundary,
+      );
+      expect(boundaries).not.toContain('skills-missing');
+      expect(boundaries).not.toContain('mcp-missing');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('reports unimplemented extension namespaces at debug level (§6)', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': JSON.stringify({
+        ...JSON.parse(VALID_PLUGIN_JSON),
+        extensions: { 'com.example.foo': { heading: 'x' } },
+      }),
+      'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
+    });
+    try {
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root], logLevel: 'debug' });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
+      const ns = logs.find(
+        (log) =>
+          (log.extra as { boundary?: string } | undefined)?.boundary === 'extension-namespace',
+      );
+      expect(ns?.level).toBe('debug');
+      expect((ns?.extra as { namespace?: string } | undefined)?.namespace).toBe('com.example.foo');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('denies a skills/ dir that symlinks outside the plugin root (§5.5)', async () => {
+    const outside = await tempDir('oap-outside-');
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    try {
+      await symlink(outside.root, join(plugin.root, 'skills'));
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+      expect(config.skills?.paths).toEqual([]);
+      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
+      const escape = logs.find(
+        (log) => (log.extra as { boundary?: string } | undefined)?.boundary === 'path-escape',
+      );
+      expect(escape?.level).toBe('warn');
+    } finally {
+      await plugin.cleanup();
+      await outside.cleanup();
     }
   });
 

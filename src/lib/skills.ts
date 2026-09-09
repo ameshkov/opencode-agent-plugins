@@ -8,11 +8,12 @@
  * with a warning so the rest of the plugin keeps loading.
  */
 
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { parseFrontmatter } from './frontmatter.js';
 import type { Failure } from './errors.js';
 import { failure } from './errors.js';
+import { isInside } from './paths.js';
 
 /** Valid skill names: lowercase words separated by single dashes. */
 /** @internal Exported for tests only; not part of the public module API. */
@@ -68,14 +69,67 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
       root: null,
     };
   }
+  // Realpath containment (§5.5): the plugin root resolves once and is reused
+  // for the top-level `skills/` entry and for every skill subdirectory.
+  const resolvedRoot = await realpath(pluginRoot).catch(() => null);
+  const escape = await skillsEscapeFailure(resolvedRoot, skillsRoot);
+  if (escape !== null) {
+    return { missing: false, skills: [], failures: [escape], root: null };
+  }
 
-  const failures: Failure[] = [];
+  const failureList: Failure[] = [];
+  const collected = await collectValidSkills(skillsRoot, resolvedRoot, failureList);
+  if (collected.escaped) {
+    // Registration is directory-granular (§5.6): Opencode scans the whole
+    // `skills/` dir, so one escaping subdirectory poisons the registration
+    // for all of it — none of the skills may be registered.
+    return { missing: false, skills: [], failures: failureList, root: null };
+  }
+
+  failureList.push(...(await findNestedSkillFiles(skillsRoot)));
+
+  return {
+    missing: false,
+    skills: collected.skills,
+    failures: failureList,
+    root: collected.skills.length > 0 ? skillsRoot : null,
+  };
+}
+
+/**
+ * Scans the immediate children of `skills/` for valid skill directories.
+ *
+ * A directory containing a regular `SKILL.md` (immediate child only) is
+ * validated; everything else (files, non-directories) is skipped. Invalid
+ * skills are recorded in `failures` as `skills-invalid`. A skill subdirectory
+ * that resolves (realpath) outside the resolved plugin root is recorded as
+ * `path-escape` and sets `escaped`, which disables registration of the whole
+ * `skills/` dir (directory-granular, §5.6).
+ *
+ * @param skillsRoot - Absolute `skills/` directory.
+ * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
+ * could not be resolved (containment then fails open).
+ * @param failures - Array to append per-skill failures to.
+ * @returns The valid skills found and whether a subdirectory escaped.
+ */
+async function collectValidSkills(
+  skillsRoot: string,
+  resolvedRoot: string | null,
+  failures: Failure[],
+): Promise<{ skills: SkillInfo[]; escaped: boolean }> {
   const skills: SkillInfo[] = [];
+  let escaped = false;
   const entries = await readdir(skillsRoot);
   for (const entry of entries) {
     const dir = join(skillsRoot, entry);
     const st = await stat(dir).catch(() => null);
     if (st === null || !st.isDirectory()) {
+      continue;
+    }
+    const escape = await skillDirEscapeFailure(entry, dir, resolvedRoot);
+    if (escape !== null) {
+      escaped = true;
+      failures.push(escape);
       continue;
     }
     const skillMd = join(dir, 'SKILL.md');
@@ -96,15 +150,61 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
       skills.push(info);
     }
   }
+  return { skills, escaped };
+}
 
-  failures.push(...(await findNestedSkillFiles(skillsRoot)));
+/**
+ * Verifies the `skills/` dir containment (§5.5).
+ *
+ * The `skills/` path must resolve (realpath) inside the plugin root — a
+ * symlinked `skills/` entry pointing outside the tree would otherwise result
+ * in an external directory being registered into `config.skills.paths`.
+ *
+ * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
+ * could not be resolved (the check then fails open).
+ * @param skillsRoot - Absolute `skills/` directory.
+ * @returns A `path-escape` failure when the path leaves the root, else null.
+ */
+async function skillsEscapeFailure(
+  resolvedRoot: string | null,
+  skillsRoot: string,
+): Promise<Failure | null> {
+  const resolvedSkills = await realpath(skillsRoot).catch(() => null);
+  if (resolvedRoot !== null && resolvedSkills !== null && !isInside(resolvedRoot, resolvedSkills)) {
+    return failure('path-escape', `skills path ${skillsRoot} escapes the plugin root`, {
+      section: '§5.5',
+    });
+  }
+  return null;
+}
 
-  return {
-    missing: false,
-    skills,
-    failures,
-    root: skills.length > 0 ? skillsRoot : null,
-  };
+/**
+ * Verifies a single skill subdirectory containment (§5.5).
+ *
+ * `stat`/`readFile` follow symlinks, so a `skills/<name>` entry that is a
+ * symlink to a directory outside the plugin root must be caught here — the
+ * external `SKILL.md` would otherwise be validated and exposed through the
+ * registered `skills/` dir.
+ *
+ * @param name - The subdirectory name as listed in `skills/`.
+ * @param dir - Absolute `skills/<name>` path.
+ * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
+ * could not be resolved (the check then fails open).
+ * @returns A `path-escape` failure when the path leaves the root, else null.
+ */
+async function skillDirEscapeFailure(
+  name: string,
+  dir: string,
+  resolvedRoot: string | null,
+): Promise<Failure | null> {
+  const resolvedDir = await realpath(dir).catch(() => null);
+  if (resolvedRoot !== null && resolvedDir !== null && !isInside(resolvedRoot, resolvedDir)) {
+    return failure('path-escape', `skill "${name}" escapes the plugin root`, {
+      skill: name,
+      section: '§5.5',
+    });
+  }
+  return null;
 }
 
 /**

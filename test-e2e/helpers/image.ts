@@ -16,7 +16,7 @@ import { IMAGE_CACHE_FILE } from './constants.js';
  * Throws with a pointer to the setup step when global-setup has not recorded
  * an image (e.g. the suite is run without the e2e vitest config).
  *
- * @returns The image tag (e.g. `opencode-agent-plugins-e2e:1.18.25`).
+ * @returns The image tag (e.g. `opencode-agent-plugins-e2e:1.18.30`).
  */
 export async function imageTag(): Promise<string> {
   const text = await readFile(IMAGE_CACHE_FILE, 'utf8').catch(() => null);
