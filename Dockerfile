@@ -32,8 +32,9 @@ RUN apt-get update \
 # `FROM deps` (build, lint, unit-test).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# pnpm is pinned to the version the project is developed against.
-RUN corepack enable && corepack prepare pnpm@10.14.0 --activate
+# pnpm is pinned to the version the project is developed against. Node 26
+# images no longer ship corepack, so pnpm is installed via npm instead.
+RUN npm install --global --no-fund --no-audit pnpm@10.14.0
 
 WORKDIR /app
 
