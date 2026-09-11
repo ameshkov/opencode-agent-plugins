@@ -1035,6 +1035,12 @@ Findings that adjust the design:
    it is a release gate, not an optional extra.
 5. **Schema provenance test**: dev script asserts the vendored schemas match
    `agent-plugins.org/schemas/1.0.0/*` byte-for-byte (CI only).
+6. **Real-world plugin suite (opt-in)**: `E2E_TOP_PLUGINS=1` installs the
+   top-ranked published Agent Plugins into clean containers and records the
+   install preview, a validation-pipeline tree scan, host-side registration
+   and discovery (`/config`, `/mcp`, `/skill`), and the captured provider
+   request. GitHub and third-party MCP endpoints make it non-hermetic, so it
+   is skipped unless explicitly opted in; CI runs the hermetic scenarios only.
 
 ---
 

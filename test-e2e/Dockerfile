@@ -131,6 +131,11 @@ COPY test-e2e/write-config.mjs /app/write-config.mjs
 COPY test-e2e/bootstrap.mjs /app/bootstrap.mjs
 COPY test-e2e/git-fixture.mjs /app/git-fixture.mjs
 
+# Diagnostic tree scanner for the opt-in top-plugins suite
+# (`E2E_TOP_PLUGINS=1`); imports the compiled validation pipeline, so its
+# warnings are identical to install-time/load-time findings.
+COPY test-e2e/scan-plugin.mjs /app/scan-plugin.mjs
+
 WORKDIR /app/workspace
 ENTRYPOINT ["node", "/app/bootstrap.mjs"]
 CMD ["hook"]

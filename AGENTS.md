@@ -61,8 +61,9 @@ opencode-agent-plugins/
 ├── test/                   # shared test infrastructure (helpers, stub client)
 ├── test-e2e/               # Docker e2e suite: real opencode + testcontainers, one
 │                             scenario file per area (agent-plugins, remote-mcp,
-│                             cli-ops, cli-session, negative-behavior) driven by
-│                             Dockerfile + bootstrap.mjs and fixtures/
+│                             cli-ops, cli-session, negative-behavior, plus the
+│                             opt-in top-plugins) driven by Dockerfile +
+│                             bootstrap.mjs + scan-plugin.mjs and fixtures/
 ├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
 └── docs/design.md          # the design document
 ```
