@@ -34,11 +34,13 @@ opencode-agent-plugins/
 │   │                         output, install/remove/update/inspect commands
 │   ├── lib/                # shared core — no @opencode-ai* runtime deps
 │   │                         (per docs/design.md §4.1); one module per concern:
-│   │   ├── resolve.ts      # source parsing (path | git URL [#ref]) + store lookup
+│   │   ├── resolve.ts      # source parsing (path | git URL [#fragment]) + store lookup
 │   │   ├── git.ts          # git availability, ls-remote, ref resolution
 │   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
-│   │   ├── install.ts      # install/remove operations (git + swap + config edit)
+│   │   ├── install.ts      # install operations (git staging + swap + config edit)
+│   │   ├── remove.ts       # remove operations (unregister + store/PLUGIN_DATA delete)
 │   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
+│   │   ├── update-status.ts # check/update status records + failure classification
 │   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
 │   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)

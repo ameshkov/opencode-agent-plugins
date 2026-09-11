@@ -26,6 +26,7 @@ export type ConfigScope =
   { kind: 'project'; cwd: string } | { kind: 'global' } | { kind: 'custom'; path: string };
 
 /** Raised on any config-edit problem (conflict, unparsable, etc.). */
+/** @internal Exported for tests only; not part of the public module API. */
 export class ConfigEditError extends Error {
   constructor(message: string) {
     super(message);
@@ -393,4 +394,17 @@ function childrenOf(node: Node): Node[] {
 /** Extracts the underlying text of a node from the source. */
 function sliceOf(text: string, node: Node): string {
   return text.slice(node.offset, node.offset + node.length);
+}
+
+/**
+ * Formats a config-edit error into a user-facing message.
+ *
+ * @param error - The thrown value.
+ * @returns The error message, or the stringified value.
+ */
+export function configError(error: unknown): string {
+  if (error instanceof ConfigEditError) {
+    return error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
 }

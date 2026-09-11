@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "beta",
+  "version": "1.0.0",
+  "description": "E2E monorepo fixture package beta (subpath source).",
+  "author": { "name": "E2E" },
+  "license": "MIT"
+}

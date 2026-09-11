@@ -19,6 +19,10 @@ import type { Scenario } from './helpers/scenario.js';
 import {
   GIT_FIXTURE_SLUG,
   GIT_FIXTURE_SOURCE,
+  GIT_SUBDIR_ALPHA_SLUG,
+  GIT_SUBDIR_ALPHA_SOURCE,
+  GIT_SUBDIR_BETA_SLUG,
+  GIT_SUBDIR_BETA_SOURCE,
   OPENCODE_VERSION,
   PLUGIN_ROOT,
   STORE_DIR,
@@ -307,6 +311,71 @@ describe(`e2e cli ops: real filesystem, opencode ${OPENCODE_VERSION}`, () => {
         await cliOk(scenario, ['install', CLI, '--yes']);
         await cliOk(scenario, ['remove', SLUG, '--yes']);
         expect(await scenario.exists(DATA_DIR)).toBe(false);
+      });
+    },
+    10 * 60 * 1000,
+  );
+
+  it(
+    'monorepo subpaths: two subdirs side by side, update one, remove one (§5.3.4)',
+    async () => {
+      await withScenario(await imageTag(), 'cli', {}, async (scenario) => {
+        await cliOk(scenario, ['install', GIT_SUBDIR_ALPHA_SOURCE, '--yes']);
+        // Beta is pinned so the alpha push below cannot drift it.
+        await cliOk(scenario, ['install', GIT_SUBDIR_BETA_SOURCE, '--yes', '--ref', 'v1.0.0']);
+
+        const alphaInstalled = `${STORE_DIR}/installed/${GIT_SUBDIR_ALPHA_SLUG}`;
+        const betaInstalled = `${STORE_DIR}/installed/${GIT_SUBDIR_BETA_SLUG}`;
+        const alphaMetaPath = `${STORE_DIR}/meta/${GIT_SUBDIR_ALPHA_SLUG}.json`;
+        const betaMetaPath = `${STORE_DIR}/meta/${GIT_SUBDIR_BETA_SLUG}.json`;
+
+        // Distinct slugs and roots; only the selected subdir is exported.
+        const alphaMeta = JSON.parse(await scenario.readFile(alphaMetaPath)) as {
+          source: string;
+          subdir?: string;
+          manifestVersion: string;
+        };
+        const betaMeta = JSON.parse(await scenario.readFile(betaMetaPath)) as {
+          ref?: string;
+          subdir?: string;
+          resolvedCommit: string;
+        };
+        expect(alphaMeta.subdir).toBe('packages/alpha');
+        expect(alphaMeta.source).toBe(GIT_SUBDIR_ALPHA_SOURCE);
+        expect(betaMeta.subdir).toBe('packages/beta');
+        expect(betaMeta.ref).toBe('v1.0.0');
+        expect(await scenario.readFile(`${alphaInstalled}/plugin.json`)).toContain('"alpha"');
+        expect(await scenario.readFile(`${betaInstalled}/plugin.json`)).toContain('"beta"');
+        expect(await scenario.exists(`${alphaInstalled}/skills/alpha/SKILL.md`)).toBe(true);
+
+        // `list` shows the subdir column.
+        const list = await cliOk(scenario, ['list']);
+        expect(list).toContain('subdir:packages/alpha');
+        expect(list).toContain('subdir:packages/beta');
+
+        // Drift only alpha; the pinned beta is not touched by `update`.
+        const betaCommit = betaMeta.resolvedCommit;
+        await gitFixture(scenario, 'push-subdir-version', 'alpha', '1.1.0');
+        const updated = await cliOk(scenario, ['update', '--yes']);
+        expect(updated).toContain('updated alpha 1.1.0 (commit');
+        const alphaAfter = JSON.parse(await scenario.readFile(alphaMetaPath)) as {
+          manifestVersion: string;
+          subdir?: string;
+        };
+        expect(alphaAfter.manifestVersion).toBe('1.1.0');
+        expect(alphaAfter.subdir).toBe('packages/alpha');
+        const betaAfter = JSON.parse(await scenario.readFile(betaMetaPath)) as {
+          resolvedCommit: string;
+        };
+        expect(betaAfter.resolvedCommit).toBe(betaCommit);
+
+        // Removing alpha leaves beta and its config source intact.
+        await cliOk(scenario, ['remove', GIT_SUBDIR_ALPHA_SLUG, '--yes']);
+        expect(await scenario.exists(alphaInstalled)).toBe(false);
+        expect(await scenario.exists(betaInstalled)).toBe(true);
+        const config = await configOf(scenario);
+        expect(config).not.toContain(GIT_SUBDIR_ALPHA_SOURCE);
+        expect(config).toContain(GIT_SUBDIR_BETA_SOURCE);
       });
     },
     10 * 60 * 1000,

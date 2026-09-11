@@ -103,6 +103,11 @@ RUN chmod +x /app/fixtures/remote-plugin/bin/remote-server.mjs
 COPY test-e2e/fixtures/git-plugin/ /app/fixtures/git-plugin/
 RUN chmod +x /app/fixtures/git-plugin/bin/serve.js
 
+# Monorepo fixture packages, seeded under `packages/` of the same git fixture
+# repo and installed through subpath sources (`#:packages/alpha`); manifest +
+# skill only, dependency-free.
+COPY test-e2e/fixtures/monorepo/ /app/fixtures/monorepo/
+
 # Negative-path fixtures (broken manifest; mcp.json $schema version mismatch).
 COPY test-e2e/fixtures/broken-plugin/ /app/fixtures/broken-plugin/
 COPY test-e2e/fixtures/mismatch-plugin/ /app/fixtures/mismatch-plugin/

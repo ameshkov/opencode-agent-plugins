@@ -49,6 +49,7 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   }
 
   if (boolFlag(args.flags, '--dry-run')) {
+    await abortStagedPlan(plan);
     console.log('dry-run: nothing was written.');
     return 0;
   }
@@ -142,7 +143,7 @@ async function ensureLoaderEntry(args: ParsedArgs): Promise<boolean> {
  */
 async function abortStagedPlan(plan: InstallPlan): Promise<void> {
   if (plan.kind === 'git') {
-    await rm(plan.root, { recursive: true, force: true });
+    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true });
   }
 }
 

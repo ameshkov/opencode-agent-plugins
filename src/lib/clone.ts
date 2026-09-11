@@ -7,10 +7,11 @@
  * commit. Staged trees are exported (`.git` removed at install time).
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isFullSha, runGit, toGitCliUrl } from './git.js';
+import { isInside } from './paths.js';
 
 /**
  * Stages a plugin tree at `commit` (exported copy, `.git` removed, §5.3.2).
@@ -40,6 +41,51 @@ export async function stageTree(
   }
   await rm(join(dir, '.git'), { recursive: true, force: true });
   return { ok: true, dir };
+}
+
+/**
+ * Derives the plugin root inside a staged clone (`docs/design.md` §5.3.4).
+ *
+ * Without a subdir the staged clone root is the plugin root. With one, the
+ * selected directory is realpath-resolved and must exist, be a directory,
+ * contain a regular `plugin.json`, and resolve inside the realpath-resolved
+ * clone (symlinks may point within the clone, never out of it). A `.git`
+ * directory at the selected root is removed so a nested repository is never
+ * exported. An empty subdir is treated exactly like an absent one, matching
+ * `slugOf` (it can only come from a hand-edited metadata file).
+ *
+ * @param stagingDir - Staged clone root from {@link stageTree}.
+ * @param subdir - Canonical monorepo subdir, when the source selects one.
+ * @returns The plugin root, or a failure message.
+ */
+export async function resolveStagedRoot(
+  stagingDir: string,
+  subdir?: string,
+): Promise<{ ok: true; root: string } | { ok: false; error: string }> {
+  if (subdir === undefined || subdir === '') {
+    return { ok: true, root: stagingDir };
+  }
+  const realStaging = await realpath(stagingDir).catch(() => null);
+  if (realStaging === null) {
+    return { ok: false, error: `staged clone disappeared: ${stagingDir}` };
+  }
+  const realRoot = await realpath(join(realStaging, subdir)).catch(() => null);
+  if (realRoot === null) {
+    return { ok: false, error: `subdir "${subdir}" not found in the staged clone` };
+  }
+  if (!isInside(realStaging, realRoot)) {
+    return { ok: false, error: `subdir "${subdir}" escapes the repository` };
+  }
+  const info = await stat(realRoot).catch(() => null);
+  if (info === null || !info.isDirectory()) {
+    return { ok: false, error: `subdir "${subdir}" is not a directory` };
+  }
+  const manifest = await stat(join(realRoot, 'plugin.json')).catch(() => null);
+  if (manifest === null || !manifest.isFile()) {
+    return { ok: false, error: `subdir "${subdir}" has no plugin.json` };
+  }
+  await rm(join(realRoot, '.git'), { recursive: true, force: true });
+  return { ok: true, root: realRoot };
 }
 
 /** Result of the clone strategy chain. */

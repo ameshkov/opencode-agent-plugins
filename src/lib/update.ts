@@ -12,7 +12,7 @@
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveRemoteRef } from './git.js';
-import { stageTree } from './clone.js';
+import { resolveStagedRoot, stageTree } from './clone.js';
 import { configSourcesOf, resolveConfigFile, type ConfigScope } from './config-file.js';
 import { dataDirForKey } from './data.js';
 import {
@@ -24,41 +24,22 @@ import {
   type StoreMeta,
 } from './store.js';
 import { parseSource, type ParsedSource } from './resolve.js';
-import { validatePluginTree } from './validate.js';
-import type { Failure } from './errors.js';
-import { failure } from './errors.js';
+import { validatePluginTree, type ValidatedPlugin } from './validate.js';
+import {
+  movedTagStatus,
+  short,
+  statusFor,
+  unreachableStatus,
+  type UpdateStatus,
+} from './update-status.js';
 
-/** Outcome of one plugin in a `check` / `update` run. */
-type UpdateStatusKind =
-  | 'up-to-date'
-  | 'update-available'
-  | 'pinned'
-  | 'moved-tag'
-  | 'corrupted'
-  | 'unreachable'
-  | 'local-path';
+export type { UpdateStatus } from './update-status.js';
 
-/** Status of one plugin from a `check` / `update` run. */
-export interface UpdateStatus {
-  /** Store slug (or `path:<source>` for path sources). */
-  slug: string;
-  /** Original registered source string. */
-  source: string;
-  /** Recorded ref, if any. */
-  ref?: string;
-  /** Recorded commit. */
-  installedCommit: string | null;
-  /** Outcome. */
-  status: UpdateStatusKind;
-  /** Extra explanation (unreachable error, moved-tag hint, ...). */
-  detail?: string;
-  /**
-   * Taxonomy classification of failure statuses (§6 rows 807-808):
-   * `check-unreachable` for `unreachable`, `update-ref` for `moved-tag`.
-   * Absent for statuses that are not failures.
-   */
-  failure?: Failure;
-}
+/**
+ * Detail shown when a staged update fails validation and the previous install
+ * is kept; the subdir branch appends the resolver error in parentheses.
+ */
+const VALIDATION_FAILED_DETAIL = 'new version fails validation; kept previous install';
 
 /**
  * Runs the read-only update check over installed plugins.
@@ -238,23 +219,14 @@ async function swapUpdate(
   newCommit: string,
   env: Record<string, string | undefined>,
 ): Promise<UpdateStatus> {
-  const staged = await stageTree(meta.url, meta.ref, newCommit);
+  const staged = await stageValidatedUpdate(slug, meta, newCommit, env);
   if (!staged.ok) {
-    return unreachableStatus(slug, meta, staged.error);
-  }
-  const validated = await validatePluginTree(staged.dir, dataDirForKey(slug, env));
-  if (validated.fatal) {
-    await rm(staged.dir, { recursive: true, force: true });
-    return statusFor(
-      slug,
-      meta,
-      'corrupted',
-      'new version fails validation; kept previous install',
-    );
+    return staged.status;
   }
   try {
-    await swapIntoPlace(staged.dir, slug, env);
+    await swapIntoPlace(staged.root, slug, env);
   } catch (error) {
+    await rm(staged.stagingDir, { recursive: true, force: true }).catch(() => undefined);
     return statusFor(
       slug,
       meta,
@@ -262,76 +234,64 @@ async function swapUpdate(
       error instanceof Error ? error.message : String(error),
     );
   }
+  await rm(staged.stagingDir, { recursive: true, force: true }).catch(() => undefined);
   await writeMeta(
     slug,
     {
       ...meta,
       resolvedCommit: newCommit,
-      manifestVersion: validated.manifest.version,
+      manifestVersion: staged.validated.manifest.version,
       installedAt: new Date().toISOString(),
     },
     env,
   );
   // The detail carries the design's "updated <name> to <version> (commit …)"
   // message payload; the CLI appends the restart note (§5.12.3).
-  const version = validated.manifest.version === undefined ? '' : ` ${validated.manifest.version}`;
+  const version =
+    staged.validated.manifest.version === undefined ? '' : ` ${staged.validated.manifest.version}`;
   return statusFor(
     slug,
     meta,
     'update-available',
-    `${validated.manifest.name}${version} (commit ${short(newCommit)})`,
+    `${staged.validated.manifest.name}${version} (commit ${short(newCommit)})`,
   );
 }
 
-/** Builds a status record from metadata. */
-function statusFor(
+/**
+ * Stages the update tree and validates it: resolves the recorded ref, derives
+ * the recorded subdir root (§5.3.4), and runs the full pipeline. Every
+ * failure returns a status with the previous install untouched.
+ */
+async function stageValidatedUpdate(
   slug: string,
   meta: StoreMeta,
-  status: UpdateStatusKind,
-  detail?: string,
-  f?: Failure,
-): UpdateStatus {
-  return {
-    slug,
-    source: meta.source,
-    ...(meta.ref === undefined ? {} : { ref: meta.ref }),
-    installedCommit: meta.resolvedCommit,
-    status,
-    ...(detail === undefined ? {} : { detail }),
-    ...(f === undefined ? {} : { failure: f }),
-  };
-}
-
-/** Taxonomy failure for the §6 `check-unreachable` row (remote unreachable). */
-function unreachableFailure(slug: string, source: string, detail: string): Failure {
-  return failure('check-unreachable', `remote unreachable: ${detail}`, { slug, source });
-}
-
-/** Taxonomy failure for the §6 `update-ref` row (moved tag, needs --force). */
-function movedTagFailure(slug: string, source: string): Failure {
-  return failure('update-ref', 'tag moved; update requires --force', { slug, source });
-}
-
-/** Builds an `unreachable` status carrying its `check-unreachable` classification. */
-function unreachableStatus(slug: string, meta: StoreMeta, detail: string): UpdateStatus {
-  return statusFor(
-    slug,
-    meta,
-    'unreachable',
-    detail,
-    unreachableFailure(slug, meta.source, detail),
-  );
-}
-
-/** Builds a `moved-tag` status carrying its `update-ref` classification. */
-function movedTagStatus(slug: string, meta: StoreMeta): UpdateStatus {
-  return statusFor(
-    slug,
-    meta,
-    'moved-tag',
-    'tag moved; update requires --force',
-    movedTagFailure(slug, meta.source),
-  );
+  newCommit: string,
+  env: Record<string, string | undefined>,
+): Promise<
+  | { ok: true; root: string; stagingDir: string; validated: ValidatedPlugin }
+  | { ok: false; status: UpdateStatus }
+> {
+  const staged = await stageTree(meta.url, meta.ref, newCommit);
+  if (!staged.ok) {
+    return { ok: false, status: unreachableStatus(slug, meta, staged.error) };
+  }
+  const derived = await resolveStagedRoot(staged.dir, meta.subdir);
+  if (!derived.ok) {
+    await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined);
+    return {
+      ok: false,
+      status: statusFor(slug, meta, 'corrupted', `${VALIDATION_FAILED_DETAIL} (${derived.error})`),
+    };
+  }
+  const validated = await validatePluginTree(derived.root, dataDirForKey(slug, env));
+  if (validated.fatal) {
+    await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined);
+    return {
+      ok: false,
+      status: statusFor(slug, meta, 'corrupted', VALIDATION_FAILED_DETAIL),
+    };
+  }
+  return { ok: true, root: derived.root, stagingDir: staged.dir, validated };
 }
 
 /** Swaps a staged tree into place with `.old-<slug>` rollback. */
@@ -355,15 +315,13 @@ async function swapIntoPlace(
     }
     throw error;
   }
-  await rm(old, { recursive: true, force: true });
+  // The new tree is live: `.old-<slug>` is throwaway now, so a failed cleanup
+  // must not report the completed swap as failed. `doctor`/`prune` reap any
+  // stray `.old-*` leftovers (§5.11, §5.12.3).
+  await rm(old, { recursive: true, force: true }).catch(() => undefined);
 }
 
 /** Checks whether a name filter selects this entry. */
 function selectedEntry(entry: StoreEntry, names: string[]): boolean {
   return names.some((name) => name === entry.slug);
-}
-
-/** Shortens a commit SHA for display. */
-function short(commit: string): string {
-  return commit.slice(0, 12);
 }

@@ -2,7 +2,7 @@
  * `remove` command: unregister + delete store entry and `PLUGIN_DATA`.
  */
 
-import { removePlugin } from '../lib/install.js';
+import { removePlugin } from '../lib/remove.js';
 import { findStoreEntry } from '../lib/store.js';
 import { dataDirForKey } from '../lib/data.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';

@@ -49,6 +49,28 @@ describe('store metadata', () => {
     }
   });
 
+  it('round-trips an optional subdir field (§5.3.4)', async () => {
+    const home = await tempDir('oap-store-');
+    try {
+      const env = storeEnv(home.root);
+      const slug = 'org-mono-packages-alpha';
+      const root = installedRootFor(slug, env);
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
+      const meta: StoreMeta = {
+        ...META,
+        source: `${META.url}#:packages/alpha`,
+        subdir: 'packages/alpha',
+      };
+      await writeMeta(slug, meta, env);
+      expect(await readMeta(slug, env)).toEqual(meta);
+      const listed = (await listInstalled(env)).find((entry) => entry.slug === slug);
+      expect(listed?.meta?.subdir).toBe('packages/alpha');
+    } finally {
+      await home.cleanup();
+    }
+  });
+
   it('ignores .old-* swap leftovers when listing', async () => {
     const home = await tempDir('oap-store-');
     try {

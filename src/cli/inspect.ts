@@ -11,8 +11,8 @@ import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { confirm } from './prompts.js';
 
 /**
- * Runs `list` — installed plugins with source, ref, commit, version, and
- * update status (§5.11).
+ * Runs `list` — installed plugins with source, ref, subdir, commit, version,
+ * and update status (§5.11).
  *
  * The status column resolves the recorded ref remotely with the same engine
  * as `check`; without the `git` binary or network access the command still
@@ -36,9 +36,10 @@ export async function cmdList(): Promise<number> {
     const name = await manifestNameOf(entry.root);
     const version = meta.manifestVersion === undefined ? '' : ` v${meta.manifestVersion}`;
     const ref = meta.ref === undefined ? 'HEAD' : meta.ref;
+    const subdir = meta.subdir === undefined ? '' : `  subdir:${meta.subdir}`;
     const status = statuses.get(entry.slug);
     console.log(
-      `${name ?? entry.slug}${version}  ${meta.url}  ref:${ref}  commit:${meta.resolvedCommit.slice(0, 12)}  ${status === undefined ? 'unknown' : statusLabel(status)}`,
+      `${name ?? entry.slug}${version}  ${meta.url}  ref:${ref}${subdir}  commit:${meta.resolvedCommit.slice(0, 12)}  ${status === undefined ? 'unknown' : statusLabel(status)}`,
     );
   }
   return 0;

@@ -21,6 +21,8 @@ export interface StoreMeta {
   url: string;
   /** Recorded ref (branch/tag/sha); undefined means the remote HEAD. */
   ref?: string;
+  /** Canonical monorepo subdir selected by the source (`a/b`); absent for root sources. */
+  subdir?: string;
   /** Commit installed at (fetched remote HEAD for moving refs). */
   resolvedCommit: string;
   /** `plugin.json` version at install time, when present. */
@@ -44,8 +46,14 @@ export function installedRootFor(slug: string, env: EnvLike = process.env): stri
   return join(storeDir('installed', env), slug);
 }
 
-/** Returns the metadata file path of a slug. */
-function metaPathFor(slug: string, env: EnvLike = process.env): string {
+/**
+ * Returns the metadata file path of a slug.
+ *
+ * @param slug - Store slug.
+ * @param env - Environment view for store-root resolution.
+ * @returns The absolute path of the entry's metadata file.
+ */
+export function metaPathFor(slug: string, env: EnvLike = process.env): string {
   return join(storeDir('meta', env), `${slug}.json`);
 }
 

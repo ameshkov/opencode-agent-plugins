@@ -47,7 +47,16 @@ export function expandPlaceholders(value: string, root: string, dataDir: string)
   return value.split(PLACEHOLDER_ROOT).join(root).split(PLACEHOLDER_DATA).join(dataDir);
 }
 
-/** @internal Exported for tests only; not part of the public module API. */
+/**
+ * Checks whether `target` is `anchor` itself or a descendant of it.
+ *
+ * The comparison is textual (`path.relative`, case-folded on Windows), so
+ * callers that need symlink safety realpath both sides first.
+ *
+ * @param anchor - Absolute anchor directory.
+ * @param target - Path to test.
+ * @returns True when the target is inside the anchor.
+ */
 export function isInside(anchor: string, target: string): boolean {
   const rel = path.relative(
     process.platform === 'win32' ? anchor.toLowerCase() : anchor,

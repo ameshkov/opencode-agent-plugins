@@ -140,10 +140,12 @@ Each entry in `plugins` is one of:
   Used in place; never copied into the store.
 - **Git URL** — `https://...`, `git+https://...`, `ssh://...`,
   `git+ssh://...`, or the scp-like `git@host:path` form, with an optional
-  `#ref` pin (`#v1.2.0`, `#main`, `#<commit-sha>`). Without a `#ref`, the
-  remote's `HEAD` at install time is used. Git sources must be installed with
-  the CLI first; at startup they resolve against the local store and are
-  skipped with a warning if not installed.
+  `#fragment`: a `#ref` pin (`#v1.2.0`, `#main`, `#<commit-sha>`), a
+  monorepo subpath (`#v1.2.0:packages/linter`, `#:apps/research`), or both.
+  Without a `#ref`, the remote's `HEAD` at install time is used. Each
+  selected subdir gets its own store entry and `PLUGIN_DATA`. Git sources
+  must be installed with the CLI first; at startup they resolve against the
+  local store and are skipped with a warning if not installed.
 - **Installed name** — the manifest name or store slug of a plugin already
   installed via the CLI.
 
@@ -153,8 +155,8 @@ Git-sourced plugins are installed into the client store:
 
 ```text
 <data-home>/opencode/agent-plugins/
-├── installed/<slug>/   # exported plugin tree at the pinned commit (no .git)
-├── meta/<slug>.json    # client metadata (URL, ref, resolved commit, ...)
+├── installed/<slug>/   # exported plugin tree (repo root or subdir, no .git)
+├── meta/<slug>.json    # client metadata (URL, ref, subdir, resolved commit, ...)
 ├── data/<key>/         # PLUGIN_DATA directories
 └── backups/            # timestamped backups of config edits
 ```
@@ -162,6 +164,9 @@ Git-sourced plugins are installed into the client store:
 `<data-home>` follows OpenCode's data-dir convention: `$XDG_DATA_HOME` when
 set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
 `PLUGIN_DATA` lives outside the installed tree, so it survives updates.
+A subpath source exports only the selected subdirectory; slug, metadata, and
+`PLUGIN_DATA` are per subdir, so two plugins of one monorepo install side by
+side.
 
 ## CLI reference
 
@@ -175,7 +180,7 @@ opencode-agent-plugins <command> [options]
 | `remove <name> [--keep-data] [--yes]` | Unregisters the plugin from the config and deletes its store entry and `PLUGIN_DATA` (kept with `--keep-data`). |
 | `check [<name>...]` | Read-only update check; no names means all installed plugins. |
 | `update [<name>...] [--yes] [--force]` | Applies available updates; `--force` follows a moved tag. |
-| `list` | Shows installed plugins: source, URL/ref, resolved commit, manifest version, status. |
+| `list` | Shows installed plugins: source kind, URL/ref/subdir, resolved commit, manifest version, status. |
 | `doctor` | Read-only health report: config entries with no store entry, unreferenced store entries, orphaned data dirs, stale swap leftovers. |
 | `prune [--yes]` | Removes what `doctor` reports as orphaned or stale. |
 

@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { tempDir } from '../../test/helpers.js';
-import { cloneInto, stageTree } from './clone.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { gitBareFixture, skillMd, tempDir, VALID_PLUGIN_JSON } from '../../test/helpers.js';
+import { cloneInto, resolveStagedRoot, stageTree } from './clone.js';
 
 /** Runs a git command, failing the test on error. */
 function git(args: string[], cwd?: string): Promise<string> {
@@ -190,6 +190,131 @@ describe('clone strategy (§5.12.1)', () => {
     } finally {
       await dir.cleanup();
       await fx.cleanup();
+    }
+  });
+});
+
+describe('resolveStagedRoot (§5.3.4)', () => {
+  let fixture: Awaited<ReturnType<typeof gitBareFixture>>;
+  let outside: Awaited<ReturnType<typeof tempDir>>;
+  let tip = '';
+
+  beforeAll(async () => {
+    fixture = await gitBareFixture({
+      'packages/alpha/plugin.json': VALID_PLUGIN_JSON,
+      'packages/alpha/skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+      'packages/no-manifest/README.md': '# no manifest',
+      'packages/not-a-dir.txt': 'file',
+    });
+    outside = await tempDir('oap-outside-');
+    await writeFile(join(outside.root, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
+    await symlink(outside.root, join(fixture.work, 'packages', 'escape'), 'dir');
+    await symlink('alpha', join(fixture.work, 'packages', 'link-inside'), 'dir');
+    await git(['add', '-A'], fixture.work);
+    await git(['commit', '-m', 'symlinks'], fixture.work);
+    await git(['push', 'origin', 'main'], fixture.work);
+    tip = (await git(['rev-parse', 'HEAD'], fixture.work)).trim();
+  });
+
+  afterAll(async () => {
+    await fixture.cleanup();
+    await outside.cleanup();
+  });
+
+  /** Stages the fixture and returns the staging dir. */
+  async function stage(): Promise<string> {
+    const staged = await stageTree(fixture.source, undefined, tip);
+    if (!staged.ok) {
+      throw new Error(staged.error);
+    }
+    return staged.dir;
+  }
+
+  it('returns the staging root unchanged without a subdir', async () => {
+    const dir = await tempDir('oap-staged-');
+    try {
+      expect(await resolveStagedRoot(dir.root)).toEqual({ ok: true, root: dir.root });
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('treats an empty subdir like an absent one', async () => {
+    const dir = await tempDir('oap-staged-');
+    try {
+      expect(await resolveStagedRoot(dir.root, '')).toEqual({ ok: true, root: dir.root });
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('derives the subdir root and strips a nested .git', async () => {
+    const staging = await stage();
+    try {
+      await mkdir(join(staging, 'packages', 'alpha', '.git'), { recursive: true });
+      const resolved = await resolveStagedRoot(staging, 'packages/alpha');
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok) return;
+      expect(await readFile(join(resolved.root, 'plugin.json'), 'utf8')).toBe(VALID_PLUGIN_JSON);
+      expect(await stat(join(resolved.root, '.git')).catch(() => null)).toBeNull();
+    } finally {
+      await cleanupStaged(staging);
+    }
+  });
+
+  it('rejects a missing subdir', async () => {
+    const staging = await stage();
+    try {
+      const resolved = await resolveStagedRoot(staging, 'packages/missing');
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) expect(resolved.error).toContain('not found');
+    } finally {
+      await cleanupStaged(staging);
+    }
+  });
+
+  it('rejects a file instead of a directory', async () => {
+    const staging = await stage();
+    try {
+      const resolved = await resolveStagedRoot(staging, 'packages/not-a-dir.txt');
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) expect(resolved.error).toContain('is not a directory');
+    } finally {
+      await cleanupStaged(staging);
+    }
+  });
+
+  it('rejects a subdir without plugin.json', async () => {
+    const staging = await stage();
+    try {
+      const resolved = await resolveStagedRoot(staging, 'packages/no-manifest');
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) expect(resolved.error).toContain('has no plugin.json');
+    } finally {
+      await cleanupStaged(staging);
+    }
+  });
+
+  it('allows a symlink that stays inside the clone', async () => {
+    const staging = await stage();
+    try {
+      const resolved = await resolveStagedRoot(staging, 'packages/link-inside');
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok) return;
+      expect(await readFile(join(resolved.root, 'plugin.json'), 'utf8')).toBe(VALID_PLUGIN_JSON);
+    } finally {
+      await cleanupStaged(staging);
+    }
+  });
+
+  it('rejects a symlink escaping the clone', async () => {
+    const staging = await stage();
+    try {
+      const resolved = await resolveStagedRoot(staging, 'packages/escape');
+      expect(resolved.ok).toBe(false);
+      if (!resolved.ok) expect(resolved.error).toContain('escapes the repository');
+    } finally {
+      await cleanupStaged(staging);
     }
   });
 });

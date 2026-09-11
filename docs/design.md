@@ -354,19 +354,24 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 #### 5.3.1 Source grammar
 
 ```text
-<source>  := <local-path> | <git-url>["#"<ref>]
-<git-url> := https://... | git+https://... | ssh://... | git+ssh://... | git@host:path (scp-like)
-<ref>     := <branch> | <tag> | <commit-sha>
+<source>   := <local-path> | <git-url>["#"<fragment>]
+<git-url>  := https://... | git+https://... | ssh://... | git+ssh://... | git@host:path (scp-like)
+<fragment> := <ref> | [<ref>]":"<subdir>
+<ref>      := <branch> | <tag> | <commit-sha>   (Git ref names cannot contain ":")
+<subdir>   := <segment>("/"<segment>)*          (no empty, "." or ".." segment)
 ```
 
 - **Local path** — absolute, `~/...` (expand `HOME`), or relative (resolved against
   `input.directory` — the workspace dir — since that is the cwd the user configures
   from). Used **in place**: edits to a path-sourced plugin are picked up on the next
-  Opencode start; this is the developer workflow.
-- **Git URL** — https or ssh, with optional `#ref` pin (`#v1.2.0`, `#main`,
-  `#<sha>`). Recognized by scheme prefixes or the scp-like `user@host:path` form;
-  a leading `git+` is normalized away. Without a `#ref`, the remote's `HEAD` is
-  used (recorded at install time).
+  Opencode start; this is the developer workflow. A local path always points at the
+  plugin root itself; it carries no fragment.
+- **Git URL** — https or ssh, with an optional `#fragment`: a ref pin
+  (`#v1.2.0`, `#main`, `#<sha>`), a subpath selection
+  (`#v1.2.0:packages/plugin`, `#:packages/plugin`), or both (§5.3.4). Recognized
+  by scheme prefixes or the scp-like `user@host:path` form; a leading `git+` is
+  normalized away. Without a ref, the remote's `HEAD` is used (recorded at
+  install time).
 - **Installed name** — an already-installed plugin can be referenced by its
   manifest name or store slug; resolves to the copy in the client store (below).
 
@@ -374,7 +379,7 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 
 ```text
 <data-home>/opencode/agent-plugins/
-├── installed/<slug>/          # plugin root of a git-sourced plugin (exported tree, no .git)
+├── installed/<slug>/          # exported plugin root (repo root or subdir, no .git)
 ├── meta/<slug>.json           # client metadata (git URL, ref, resolved commit, ...)
 ├── data/<key>/                # PLUGIN_DATA (see §5.8)
 └── backups/                   # config-edit .bak files, kept out of the user's repo
@@ -384,14 +389,16 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
 
 - `slug` is derived from the source URL (host/org/repo, sanitized) so the same
-  repository is idempotently installed once.
+  repository is idempotently installed once; a subdir selection extends the slug
+  so each plugin of a monorepo gets its own entry (§5.3.4).
 - `installed/<slug>` is an **exported tree at the pinned commit — `.git` is
   removed at install time.** Nothing in the design ever uses the installed `.git`
   (update checks use `ls-remote`, updates re-clone to staging, §5.12.3), so
   keeping it would double disk for no benefit and invite "dirty working tree"
   confusion. Faster fetch-in-place updates are future work (§12).
 - **Metadata lives outside the plugin root**, in `meta/<slug>.json`:
-  `{ source, url, ref, resolvedCommit, manifestVersion, installedAt }`. Keeping
+  `{ source, url, ref, subdir, resolvedCommit, manifestVersion, installedAt }`
+  (`subdir` only for monorepo sources, §5.3.4). Keeping
   it out of the tree keeps the tree pristine (exactly what was published),
   removes it from the containment surface, and avoids spec §8.2 questions about
   non-reverse-DOM client directories inside the package.
@@ -411,7 +418,62 @@ set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
    realpath-resolved root (handles symlinks deterministically).
 
 Future sources (explicit enum in the parser, not implemented in v1): `file://`
-URLs, npm package names, monorepo subpath selection (`#ref:subdir`).
+URLs, npm package names.
+
+#### 5.3.4 Monorepo subpath selection
+
+A git source may select a plugin that lives in a subdirectory of its repository,
+so a monorepo can publish several plugins without a per-plugin repository:
+
+```text
+https://github.com/org/monorepo.git#v1.2.0:packages/linter
+https://github.com/org/monorepo.git#:apps/research      # HEAD + subdir
+```
+
+- **Syntax** — the fragment is split at the first `:`. Everything before it is
+  the ref (may be empty), everything after it is the subdir; a fragment without
+  `:` is a bare ref, exactly as today. Git ref names cannot contain `:`, so the
+  split is unambiguous. `#:<subdir>` is the unpinned form: the remote's `HEAD`
+  at install time, identical to a source with no fragment. An empty fragment
+  (`#`) or `#:` is rejected at parse time.
+- **Subdir shape** — one or more `/`-separated segments; no empty, `.` or `..`
+  segment, no leading or trailing `/`, no `\` and no `:`. The subdir is not
+  `~`-expanded and not percent-decoded. A subdir that fails these rules is
+  rejected at parse time, before any network call, like a malformed ref.
+- **Plugin root** — after the staging clone at the resolved commit, the plugin
+  root is `realpath(<staging>/<subdir>)`. It must exist, be a directory, contain
+  `plugin.json`, and resolve inside `realpath(<staging>)` (symlinks may point
+  within the clone, never out of it — the existing containment rules, §5.5).
+  A failure here aborts `install` with nothing written and fails `update`
+  staging validation, keeping the previous install and reporting `corrupted`
+  (same path as any invalid staged copy, §5.12.3).
+- **Store** — the installer exports only the plugin root tree (the subdir, not
+  the repository) into `installed/<slug>` and strips `.git` at that root, so the
+  invariant *plugin root = `installed/<slug>`* holds for every source kind.
+  Sibling files above the subdir are not reachable by the plugin anyway: the
+  containment rules already deny `../` paths. `meta/<slug>.json` gains an
+  optional `subdir` field with the canonical subdir; `check`, `update`, `list`,
+  and installed-name resolution read it. Startup needs no subdir logic: by then
+  the plugin root is the exported tree.
+- **Slug** — without a subdir, `slugOf(url)` as today. With a subdir,
+  `<slugOf(url)>-<flattened subdir>-<hash8>`: subdir segments are lowercased,
+  non-`[a-z0-9-]` characters become `-`, joined with `-`, and `hash8` is the
+  first 8 hex characters of the SHA-256 of the lowercased canonical subdir.
+  The hash is always present, so the mapping is injective even when two
+  distinct subdirs flatten alike (`packages/a/b`, `packages/a-b`, and
+  `packages/a_b` all flatten to `packages-a-b`). The whole slug is truncated
+  to 64 characters, preserving the `-<hash8>` suffix. Two subdirs of one
+  repository therefore get distinct slugs, roots, and `PLUGIN_DATA` dirs, and
+  install side by side — except subdirs that differ only by case, which
+  deliberately share a slug (§10).
+- **`--ref`** — overrides only the ref in the source; a `:subdir` already
+  present is preserved. The flag cannot add or remove a subdir.
+- **Failure classification** — parse-time subdir errors and post-clone subdir
+  resolution failures are `install-fail` (§6).
+- **Tests** — parse and slug cases in `resolve.test.ts`; staging and containment
+  cases (missing subdir, file instead of directory, `..` and symlink escapes)
+  against the local bare-repo fixtures; CLI install/update/remove and config
+  round-trip; two subdirs of one repository side by side (§9.2).
 
 ### 5.4 Manifest validation
 
@@ -563,7 +625,9 @@ Details:
 - Layout: `<data-home>/opencode/agent-plugins/data/<key>/` (see §5.3.2 for
   `<data-home>` resolution). The key is chosen per source kind:
     - **Git-sourced:** `key = slug` — stable across plugin renames (the slug comes
-    from the URL, not the manifest) and human-matching to `installed/<slug>`.
+    from the URL and any subdir selection, not the manifest) and human-matching
+    to `installed/<slug>`; distinct subdirs of one repository get distinct keys
+    (§5.3.4).
     - **Path-sourced:** `key = <manifest-name>-<hash8>`, where `hash8` is the first
     8 hex chars of the SHA-256 of the realpathed plugin root. The name segment is
     a debugging hint only; identity is the hash. If a path-sourced plugin renames
@@ -615,7 +679,7 @@ plugin, so install-time validation is byte-identical to what the plugin will do.
 | `remove <name>` `[--keep-data] [--yes]` | Unregisters from Opencode config and deletes the store entry **and** its `PLUGIN_DATA` |
 | `check [<name>…]` | Read-only update check (network) — resolves the configured ref remotely and compares with the recorded commit; no names = all |
 | `update [<name>…] [--yes] [--force]` | Applies available updates (staging → validate → atomic swap, §5.12.3); `--force` follows a moved tag |
-| `list` | Shows installed plugins: source kind, URL/ref, resolved commit, manifest version, status (current / update available / pinned) |
+| `list` | Shows installed plugins: source kind, URL/ref/subdir, resolved commit, manifest version, status (current / update available / pinned) |
 | `doctor` | Read-only health report: config entries with no store entry, store entries referenced by no config, orphaned `PLUGIN_DATA` dirs, stale `.old-*` swap leftovers, stale name segments in data-dir keys |
 | `prune [--yes]` | Removes what `doctor` lists as orphaned/stale (never anything referenced by a config entry) |
 
@@ -649,8 +713,9 @@ Behavior notes:
   only (skipping confirmation prompts). Existing configs that already have
   the tuple are never re-prompted.
 - The registered value is the **original source string** exactly as given (git
-  URL including any `#ref`, or the local path) — the startup resolver (§5.3.3)
-  maps it back to the store entry. We never register store-internal paths.
+  URL including any `#ref`/`:subdir` fragment, or the local path) — the startup
+  resolver (§5.3.3) maps it back to the store entry. We never register
+  store-internal paths.
 - **`--no-register`**: installs and prints the config snippet to add manually
   (no loader-entry check — nothing is edited).
 - The CLI never touches a running Opencode process.
@@ -664,16 +729,22 @@ Behavior notes:
    `git ls-remote` (dereferencing annotated tags with `^{}`), then clone into a
    temp staging dir (`--depth 1` at the resolved ref where the transport allows;
    a full clone only when a raw commit SHA pin requires it).
-2. Validate the staged copy with the full pipeline (manifest → skills → MCP).
+2. Determine the plugin root: the staged clone root, or `<staging>/<subdir>` for
+   a subpath source, after the subdir containment and `plugin.json` checks
+   (§5.3.4). Validate the plugin root with the full pipeline (manifest → skills
+   → MCP).
 3. Preview: print manifest name/version, the skills and MCP servers that would be
    registered — for stdio servers the command + args, for remote servers the URL
    and configured header names (values redacted) — installing a plugin means
    Opencode will later *run* those commands and *talk to* those endpoints, so
    both are shown before confirmation.
-4. On confirm: strip `.git` from the staged copy, move it into
-   `installed/<slug>`, write `meta/<slug>.json` (`url`, `ref`, `resolvedCommit`,
-   `manifestVersion`, `installedAt`), register the source in the Opencode config
-   (§5.11).
+4. On confirm: strip `.git` at the plugin root, export that tree into
+   `installed/<slug>` — the whole staged clone for a root source, only the
+   selected subdir for a subpath source (§5.3.4) — write `meta/<slug>.json`
+   (`url`, `ref`, `subdir`, `resolvedCommit`, `manifestVersion`, `installedAt`),
+   register the source in the Opencode config (§5.11). When writing the
+   metadata or registering the source fails after the tree moved, the store
+   entry is rolled back, so a failed install leaves nothing half-applied.
 5. Message: *"installed `<name> <version>`. **Restart Opencode** to use it."*
 
 Failure at any validation step aborts with nothing changed on disk.
@@ -687,7 +758,11 @@ Failure at any validation step aborts with nothing changed on disk.
 2. Print what will be removed (with `--dry-run`), ask for confirmation.
 3. Delete the `plugin` config entry (JSONC-preserving, atomic, backup in
    `backups/`) and remove `installed/<slug>`, `meta/<slug>.json`, **and**
-   `data/<slug>` unless `--keep-data`.
+   `data/<slug>` unless `--keep-data`. The three deletions are attempted
+   independently; when one fails after the config entry is gone, the failure
+   names the leftover paths (`install-fail`) instead of aborting with a raw
+   filesystem error. A missing or blank config holds no registration, so it
+   reports `"<source>" is not registered`, never a JSONC parse error.
 4. Message: *"removed `<name>`. **Restart Opencode** to drop its tools and skills."*
 
 Path-sourced plugins have no `remove` (the path is the source of truth); suggest
@@ -710,9 +785,10 @@ at startup (§5.3.3); updates are applied by `opencode-agent-plugins check` / `u
   `update available` / `pinned (immutable)` / `unreachable`.
   **No restart needed — `check` changes nothing.**
 - `update` then re-fetches: clone into a temp staging dir at the resolved ref
-  (the commit `ls-remote` reported, §5.12.1's clone strategy), strip `.git`,
-  run the full validation pipeline on the staged
-  copy — all failure modes are caught here, *before* anything live is touched —
+  (the commit `ls-remote` reported, §5.12.1's clone strategy), re-derive the
+  recorded plugin root (the subdir for a subpath source, §5.3.4), strip `.git`,
+  run the full validation pipeline on that root — all failure modes are caught
+  here, *before* anything live is touched —
   and only then swap it into `installed/<slug>` (rename `installed/<slug>` →
   `.old-<slug>`, rename staged → `installed/<slug>`) and rewrite
   `meta/<slug>.json` with the new `resolvedCommit`/`manifestVersion`. On swap
@@ -731,8 +807,9 @@ Ref semantics:
 | commit SHA | no-op | no-op |
 
 - Path sources are reported as *"local path — update by editing the source"*.
-- Failure (unreachable host, auth failure, invalid new manifest, swap failure)
-  aborts with the previous install untouched and nothing half-applied.
+- Failure (unreachable host, auth failure, invalid new manifest, disappeared
+  subdir, swap failure) aborts with the previous install untouched and nothing
+  half-applied.
 - Failure statuses carry the §6 taxonomy classification as structured
   `UpdateStatus.failure` records: `unreachable` is a `check-unreachable` and a
   moved tag an `update-ref` — both `warn` per §6 rows 807-808. Non-failure
@@ -799,7 +876,7 @@ bounds the realistic failure modes:
 | Server fails to start/connect/auth (runtime) | server | Opencode drops it; other components unaffected | warn (from Opencode) |
 | Git-sourced plugin not installed at startup | source | skip entry, continue — no network fetch | warn |
 | Installed store entry corrupted / missing manifest | source | reject plugin, continue with others | error |
-| `install`: fetch, clone, or validation fails | install | abort; nothing written | error |
+| `install`: fetch, clone, validation, subpath resolution, or store write fails; `remove`: store deletion fails | install | abort; install rolls back so nothing is written, remove names the leftover paths | error |
 | `check`: remote unreachable / auth failure | check | report status unknown, no changes | warn |
 | `update`: moved tag / non-fast-forward ref | update | refuse, keep current tree | warn |
 | CLI config edit conflicts or fails re-parse | config | abort, keep timestamped backup in store `backups/`, nothing changed | error |
@@ -931,6 +1008,8 @@ Findings that adjust the design:
    - Placeholder expansion: `./`, `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`, escape attempts
      (`../` both pre- and post-expansion), literal unknown placeholders, expansion
      in the wrong fields (command/url must not expand).
+   - Source grammar: `#ref`, `#ref:subdir`, `#:subdir`, malformed refs and
+     subdirs, subdir slug derivation and truncation (§5.3.4).
    - Failure taxonomy: one test per §6 row asserting the classification and that
      remaining components load.
 2. **Integration tests**: run the loader against a minimal fake `Config` object;
@@ -944,7 +1023,10 @@ Findings that adjust the design:
    - remove deletes the store entry + data dir and edits the config JSONC without
       touching comments;
    - config edits round-trip through the parser and a timestamped backup in
-     `backups/` is left on failure.
+     `backups/` is left on failure;
+   - subpath sources: install/update/remove a plugin from a monorepo fixture,
+     two subdirs side by side, subdir escapes (`..`, absolute, symlink) rejected
+     before anything is written, `--ref` overriding only the ref.
 4. **E2E (CI-gating per Opencode release)**: the scenario described in §9.1 — run
    Opencode against a fixture plugin in a clean environment and assert the
    captured model request. This is the only test layer that catches silent
@@ -991,8 +1073,15 @@ Findings that adjust the design:
   mis-resolved as a literal relative path.
 - **scp-like vs. Windows paths** → the scp-like git form requires `user@host:path`
   (an `@` before the colon), so `C:\...` can never be misdetected as a git URL.
-- **Malformed git refs** (`#ref` with whitespace, empty ref) → rejected at parse
-  time with a clear error, before any network call.
+- **Malformed git refs and subdirs** (`#ref` with whitespace, empty ref and
+  subdir, `..`/absolute/symlink-escaping subdir) → rejected at parse time or
+  after the clone, before anything is written.
+- **Monorepo subdirs** → each selected subdir is its own store entry with a
+  distinct slug and `PLUGIN_DATA`, so two subdirs of one repository install side
+  by side (§5.3.4). Subdirs that differ only by case sanitize to the same slug;
+  the second install then reports "already installed".
+- **Subdir disappears on update** → the staged copy fails validation and the
+  previous install is kept (§5.3.4, §5.12.3).
 - **`install` on an already-installed slug** → reports "already installed at
   commit …", hints at `update` instead of silently overwriting.
 
@@ -1024,7 +1113,7 @@ Findings that adjust the design:
 
 ## 12. Future work
 
-- npm registry / `file://` sources; monorepo subpath selection (`#ref:subdir`).
+- npm registry / `file://` sources.
 - Extract the shared core into a standalone core package (and reconsider a
   multi-package workspace, §4.2) if the client core gains consumers beyond this
   repo.

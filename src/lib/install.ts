@@ -1,36 +1,26 @@
 /**
- * Plugin install / remove lifecycle (`docs/design.md` §5.12.1–§5.12.2).
+ * Plugin install lifecycle (`docs/design.md` §5.12.1).
  *
  * Install fetches the source (git URL only — path sources are used in place),
  * validates the staged copy with the full pipeline, previews what will be
  * registered, then swaps it into the store and registers the source in the
- * OpenCode config. Remove unregisters and deletes the store entry plus its
- * `PLUGIN_DATA` (unless `--keep-data`).
+ * OpenCode config. Removal lives in `remove.ts` (§5.12.2).
  */
 
 import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { gitAvailable, resolveRemoteCommit } from './git.js';
-import { stageTree } from './clone.js';
+import { resolveStagedRoot, stageTree } from './clone.js';
 import {
   applyRegisterSource,
-  applyRemoveSource,
+  configError,
   configPreferenceNote,
-  ConfigEditError,
   resolveConfigFile,
   saveConfig,
   type ConfigScope,
 } from './config-file.js';
 import { dataDirForKey, storeDir } from './data.js';
-import {
-  findStoreEntry,
-  installedRootFor,
-  readMeta,
-  removeMeta,
-  writeMeta,
-  type StoreEntry,
-  type StoreMeta,
-} from './store.js';
+import { installedRootFor, readMeta, removeMeta, writeMeta, type StoreMeta } from './store.js';
 import { parseSource, type GitSource } from './resolve.js';
 import { validatePluginTree, type ValidatedPlugin } from './validate.js';
 import { failure, type Failure } from './errors.js';
@@ -51,8 +41,13 @@ export interface InstallPlan {
   kind: 'git' | 'path';
   /** Git source info (git kind only). */
   source?: GitSource;
-  /** Absolute plugin root: staged dir (git) or source root (path). */
+  /** Absolute plugin root: staged subdir (git) or source root (path). */
   root: string;
+  /**
+   * Throwaway staging clone root (git kind only). Differs from `root` when a
+   * monorepo subdir was selected; equals it for repository-root sources.
+   */
+  stagingDir?: string;
   /** Store slug (git kind only). */
   slug?: string;
   /** Commit that will be recorded (git kind only). */
@@ -141,6 +136,34 @@ async function prepareGitInstall(
       ),
     };
   }
+  const staged = await stageGitSource(raw, source);
+  if (!staged.ok) {
+    return { ok: false, failure: staged.failure };
+  }
+  const validated = await validatePluginTree(staged.root, dataDirForKey(source.slug, env));
+  return {
+    ok: true,
+    plan: {
+      raw,
+      kind: 'git',
+      source,
+      root: staged.root,
+      stagingDir: staged.stagingDir,
+      slug: source.slug,
+      resolvedCommit: staged.resolvedCommit,
+      validated,
+    },
+  };
+}
+
+/** Resolves, stages and derives the plugin root of a git source (§5.3.4). */
+async function stageGitSource(
+  raw: string,
+  source: GitSource,
+): Promise<
+  | { ok: true; root: string; stagingDir: string; resolvedCommit: string }
+  | { ok: false; failure: Failure }
+> {
   const commit = await resolveRemoteCommit(source.url, source.ref);
   if (!commit.ok) {
     return { ok: false, failure: failure('install-fail', commit.error) };
@@ -149,19 +172,16 @@ async function prepareGitInstall(
   if (!staged.ok) {
     return { ok: false, failure: failure('install-fail', staged.error) };
   }
-  const dataDir = dataDirForKey(source.slug, env);
-  const validated = await validatePluginTree(staged.dir, dataDir);
+  const derived = await resolveStagedRoot(staged.dir, source.subdir);
+  if (!derived.ok) {
+    await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined);
+    return { ok: false, failure: failure('install-fail', derived.error, { source: raw }) };
+  }
   return {
     ok: true,
-    plan: {
-      raw,
-      kind: 'git',
-      source,
-      root: staged.dir,
-      slug: source.slug,
-      resolvedCommit: commit.commit,
-      validated,
-    },
+    root: derived.root,
+    stagingDir: staged.dir,
+    resolvedCommit: commit.commit,
   };
 }
 
@@ -213,7 +233,7 @@ export async function applyInstall(
  */
 async function abortFatalInstall(plan: InstallPlan): Promise<OpResult> {
   if (plan.kind === 'git') {
-    await rm(plan.root, { recursive: true, force: true });
+    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true }).catch(() => undefined);
   }
   return {
     ok: false,
@@ -237,30 +257,19 @@ async function applyGitInstall(
   resolvedCommit: string,
   options: LifecycleOptions & { noRegister?: boolean },
 ): Promise<OpResult> {
-  const installed = installedRootFor(slug, options.env);
-  await mkdir(join(installed, '..'), { recursive: true });
-  const already = await stat(installed).catch(() => null);
-  if (already !== null) {
-    await rm(plan.root, { recursive: true, force: true });
-    return {
-      ok: false,
-      failure: failure('install-fail', `store entry already exists: ${slug}`),
-    };
+  const moveFailure = await moveStagedTree(plan, slug, options.env);
+  if (moveFailure !== null) {
+    return { ok: false, failure: moveFailure };
   }
-  await rename(plan.root, installed);
-  const meta: StoreMeta = {
-    source: plan.raw,
-    url: plan.source!.url,
-    ...(plan.source!.ref === undefined ? {} : { ref: plan.source!.ref }),
-    resolvedCommit,
-    manifestVersion: plan.validated.manifest.version,
-    installedAt: new Date().toISOString(),
-  };
-  await writeMeta(slug, meta, options.env);
+  const metaFailure = await writeInstallMeta(plan, slug, resolvedCommit, options.env);
+  if (metaFailure !== null) {
+    return { ok: false, failure: metaFailure };
+  }
   let configNote: string | undefined;
   if (!options.noRegister) {
     const registered = await registerConfig(plan.raw, options);
     if (!registered.ok) {
+      await rollbackGitInstall(slug, options.env);
       return registered;
     }
     configNote = registered.configNote;
@@ -276,6 +285,98 @@ async function applyGitInstall(
     message,
     ...(configNote === undefined ? {} : { configNote }),
   };
+}
+
+/**
+ * Moves the staged tree to `installed/<slug>`, refusing an existing entry.
+ *
+ * @param plan - The prepared plan.
+ * @param slug - Store slug.
+ * @param env - Environment view for store-root resolution (undefined uses
+ * `process.env`).
+ * @returns A failure when the entry already exists, else null.
+ */
+async function moveStagedTree(
+  plan: InstallPlan,
+  slug: string,
+  env?: Record<string, string | undefined>,
+): Promise<Failure | null> {
+  const installed = installedRootFor(slug, env);
+  await mkdir(join(installed, '..'), { recursive: true });
+  const already = await stat(installed).catch(() => null);
+  if (already !== null) {
+    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true }).catch(() => undefined);
+    return failure('install-fail', `store entry already exists: ${slug}`);
+  }
+  await rename(plan.root, installed);
+  if (plan.stagingDir !== undefined && plan.stagingDir !== plan.root) {
+    // Throwaway staging clone: a failed cleanup must not abort a valid
+    // install (the OS temp dir reaps leftovers).
+    await rm(plan.stagingDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+  return null;
+}
+
+/**
+ * Writes the store metadata of a moved git install.
+ *
+ * When the write fails the install is not committed, so the moved tree and
+ * any partial metadata are rolled back before the failure is returned.
+ *
+ * @param plan - The prepared plan.
+ * @param slug - Store slug.
+ * @param resolvedCommit - Commit recorded in the metadata.
+ * @param env - Environment view for store-root resolution (undefined uses
+ * `process.env`).
+ * @returns A failure when the metadata could not be written, else null.
+ */
+async function writeInstallMeta(
+  plan: InstallPlan,
+  slug: string,
+  resolvedCommit: string,
+  env?: Record<string, string | undefined>,
+): Promise<Failure | null> {
+  const meta: StoreMeta = {
+    source: plan.raw,
+    url: plan.source!.url,
+    ...(plan.source!.ref === undefined ? {} : { ref: plan.source!.ref }),
+    ...(plan.source!.subdir === undefined ? {} : { subdir: plan.source!.subdir }),
+    resolvedCommit,
+    manifestVersion: plan.validated.manifest.version,
+    installedAt: new Date().toISOString(),
+  };
+  try {
+    await writeMeta(slug, meta, env);
+    return null;
+  } catch (error) {
+    // The tree moved, but without metadata the install is not committed:
+    // roll the store entry back so a failure leaves nothing half-applied.
+    await rollbackGitInstall(slug, env);
+    const message = error instanceof Error ? error.message : String(error);
+    return failure(
+      'install-fail',
+      `failed to write store metadata: ${message}; nothing was installed`,
+    );
+  }
+}
+
+/**
+ * Rolls back a git install's store entry when a later step failed (§5.12.1).
+ *
+ * Best-effort: the original failure is what the user needs to see, so a
+ * failed rollback is left for `doctor` to report rather than replacing that
+ * failure with a cleanup error.
+ *
+ * @param slug - Store slug of the entry to remove.
+ * @param env - Environment view for store-root resolution (undefined uses
+ * `process.env`).
+ */
+async function rollbackGitInstall(
+  slug: string,
+  env?: Record<string, string | undefined>,
+): Promise<void> {
+  await rm(installedRootFor(slug, env), { recursive: true, force: true }).catch(() => undefined);
+  await removeMeta(slug, env).catch(() => undefined);
 }
 
 /** Registers a source in the resolved OpenCode config. */
@@ -295,86 +396,4 @@ async function registerConfig(source: string, options: LifecycleOptions): Promis
     const message = configError(error);
     return { ok: false, failure: failure('config-edit', message) };
   }
-}
-
-/**
- * Removes a plugin: resolves the name to a store entry (ambiguous names are
- * refused), unregisters its source from the config, then deletes the store
- * entry, metadata, and `PLUGIN_DATA`.
- *
- * @param name - Store slug or manifest name.
- * @param options - Lifecycle options.
- * @param options.keepData - Keep `PLUGIN_DATA` on disk.
- * @returns The outcome.
- */
-export async function removePlugin(
-  name: string,
-  options: LifecycleOptions & { keepData?: boolean },
-): Promise<OpResult> {
-  const entries = await findStoreEntry(name, options.env);
-  if (entries.length === 0) {
-    return {
-      ok: false,
-      failure: failure(
-        'install-fail',
-        `"${name}" is not installed in the client store (path-sourced plugins are removed by editing the config)`,
-      ),
-    };
-  }
-  if (entries.length > 1) {
-    const slugs = entries.map((e) => e.slug).join(', ');
-    return {
-      ok: false,
-      failure: failure(
-        'install-fail',
-        `"${name}" matches multiple store entries (${slugs}); use the slug`,
-      ),
-    };
-  }
-  return removeStoreEntry(entries[0]!, options);
-}
-
-/** Unregisters and deletes one store entry (config edit + removal). */
-async function removeStoreEntry(
-  entry: StoreEntry,
-  options: LifecycleOptions & { keepData?: boolean },
-): Promise<OpResult> {
-  const meta = entry.meta;
-  if (meta === null) {
-    return {
-      ok: false,
-      failure: failure('source-corrupt', `store entry "${entry.slug}" is corrupted`),
-    };
-  }
-  let backupPath: string | undefined;
-  let configNote: string | undefined;
-  try {
-    const resolved = await resolveConfigFile(options.configScope);
-    const previous = await readFile(resolved.path, 'utf8').catch(() => null);
-    const edited = applyRemoveSource(previous ?? '', meta.source);
-    const saved = await saveConfig(resolved.path, edited, options.env, previous);
-    backupPath = saved.backupPath ?? undefined;
-    configNote = configPreferenceNote(resolved) ?? undefined;
-  } catch (error) {
-    return { ok: false, failure: failure('config-edit', configError(error)) };
-  }
-  await rm(installedRootFor(entry.slug, options.env), { recursive: true, force: true });
-  await removeMeta(entry.slug, options.env);
-  if (!options.keepData) {
-    await rm(dataDirForKey(entry.slug, options.env), { recursive: true, force: true });
-  }
-  return {
-    ok: true,
-    message: `removed ${meta.source}. Restart OpenCode to drop its tools and skills.`,
-    backupPath,
-    ...(configNote === undefined ? {} : { configNote }),
-  };
-}
-
-/** Formats a config-edit error into a user-facing message. */
-function configError(error: unknown): string {
-  if (error instanceof ConfigEditError) {
-    return error.message;
-  }
-  return error instanceof Error ? error.message : String(error);
 }

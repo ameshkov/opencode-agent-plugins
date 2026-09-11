@@ -8,15 +8,17 @@
  *
  * Creates a bare fixture repository at `/app/git-fixtures/remote.git` whose
  * default branch is `main`, seeded from `test-e2e/fixtures/git-plugin/` at
- * version 1.0.0 (tag `v1.0.0`), plus a working clone at
- * `/app/git-fixtures/work` used to author new commits.
+ * version 1.0.0 (tag `v1.0.0`) plus the monorepo packages from
+ * `test-e2e/fixtures/monorepo/packages/` under `packages/`, and a working
+ * clone at `/app/git-fixtures/work` used to author new commits.
  *
  * Subcommands:
- *   init            create the repo (idempotent; no-op when it exists)
- *   push-version V  bump plugin.json to version V, commit, push main
- *   push-broken     commit an invalid plugin.json, push main
- *   move-tag T      move tag T to the current HEAD, force-push it
- *   head            print the current main commit SHA (for assertions)
+ *   init              create the repo (idempotent; no-op when it exists)
+ *   push-version V    bump plugin.json to version V, commit, push main
+ *   push-subdir-version PKG V  bump packages/PKG/plugin.json, commit, push main
+ *   push-broken       commit an invalid plugin.json, push main
+ *   move-tag T        move tag T to the current HEAD, force-push it
+ *   head              print the current main commit SHA (for assertions)
  */
 
 import { execFileSync } from 'node:child_process';
@@ -26,6 +28,7 @@ import { join } from 'node:path';
 const BARE = '/app/git-fixtures/remote.git';
 const WORK = '/app/git-fixtures/work';
 const SRC = '/app/fixtures/git-plugin';
+const MONOREPO = '/app/fixtures/monorepo';
 const MANIFEST = join(WORK, 'plugin.json');
 
 /** Runs `git` with the given args in the given cwd (fails loudly). */
@@ -52,6 +55,7 @@ function init() {
   git(['config', 'user.email', 'e2e@e2e.dev'], WORK);
   git(['config', 'user.name', 'E2E'], WORK);
   cpSync(SRC, WORK, { recursive: true });
+  cpSync(join(MONOREPO, 'packages'), join(WORK, 'packages'), { recursive: true });
   git(['add', '-A'], WORK);
   git(['commit', '-m', 'v1.0.0'], WORK);
   git(['remote', 'add', 'origin', BARE], WORK);
@@ -73,6 +77,21 @@ function pushVersion(version) {
   git(['commit', '-m', `v${version}`]);
   git(['push', 'origin', 'main']);
   console.log(`GIT_FIXTURE_PUSHED version=${version}`);
+}
+
+/** Bumps packages/<pkg>/plugin.json to a version, commits and pushes main. */
+function pushSubdirVersion(pkg, version) {
+  const manifestPath = join(WORK, 'packages', pkg, 'plugin.json');
+  if (!existsSync(manifestPath)) {
+    fail(`unknown monorepo package: ${pkg}`);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.version = version;
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  git(['add', `packages/${pkg}/plugin.json`]);
+  git(['commit', '-m', `${pkg} v${version}`]);
+  git(['push', 'origin', 'main']);
+  console.log(`GIT_FIXTURE_PUSHED subdir=${pkg} version=${version}`);
 }
 
 /** Commits an invalid plugin.json and pushes main. */
@@ -108,6 +127,12 @@ switch (command) {
       fail('push-version requires a version argument');
     }
     pushVersion(process.argv[3]);
+    break;
+  case 'push-subdir-version':
+    if (process.argv[3] === undefined || process.argv[4] === undefined) {
+      fail('push-subdir-version requires a package and a version argument');
+    }
+    pushSubdirVersion(process.argv[3], process.argv[4]);
     break;
   case 'push-broken':
     pushBroken();

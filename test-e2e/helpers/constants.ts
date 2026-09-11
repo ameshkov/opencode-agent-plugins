@@ -43,6 +43,16 @@ export const STATIC_DATA_DIR = '/app/static-data/hello';
 export const GIT_FIXTURE_SOURCE = 'file:///app/git-fixtures/remote.git';
 export const GIT_FIXTURE_SLUG = 'git-fixtures-remote';
 
+/** Monorepo subpath packages seeded under `packages/` of the git fixture. */
+export const GIT_SUBDIR_ALPHA_SOURCE = `${GIT_FIXTURE_SOURCE}#:packages/alpha`;
+/**
+ * Subdir slug (`<url slug>-<flattened subdir>-<hash8>`, §5.3.4); the hash is
+ * the first 8 hex chars of the SHA-256 of the lowercased canonical subdir.
+ */
+export const GIT_SUBDIR_ALPHA_SLUG = `${GIT_FIXTURE_SLUG}-packages-alpha-922b0764`;
+export const GIT_SUBDIR_BETA_SOURCE = `${GIT_FIXTURE_SOURCE}#:packages/beta`;
+export const GIT_SUBDIR_BETA_SLUG = `${GIT_FIXTURE_SLUG}-packages-beta-01bea2ef`;
+
 /** In-container paths of the fixture plugins and the git working tree. */
 export const GIT_FIXTURE_WORK = '/app/git-fixtures/work';
 export const FIXTURES_DIR = '/app/fixtures';
