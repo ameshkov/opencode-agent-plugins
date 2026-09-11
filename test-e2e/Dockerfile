@@ -30,8 +30,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # git is required by the CLI's git-backed commands (install/check/update,
 # §5.11) and by the git fixture manager that mutates the fixture remote.
+# ca-certificates is required for HTTPS remotes (GitHub): the slim base image
+# ships no CA bundle, and git fails TLS verification without it (npm works
+# because Node bundles its own roots).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git \
+  && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 # The release the plugin is verified against — matches the
