@@ -88,6 +88,23 @@ describe('discoverSkills', () => {
     }
   });
 
+  it('ignores non-SKILL.md resource files inside a skill dir (§5.6)', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+      'skills/hello/references/notes.md': '# Notes\n',
+      'skills/hello/scripts/run.sh': '#!/bin/sh\n',
+    });
+    try {
+      const result = await discoverSkills(plugin.root);
+      expect(result.skills.map((s) => s.name)).toEqual(['hello']);
+      expect(result.failures).toEqual([]);
+      expect(result.root).toContain('/skills');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
   it('flags a non-directory skills/ entry', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,

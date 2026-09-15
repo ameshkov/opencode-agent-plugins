@@ -1,4 +1,4 @@
-import { realpath, stat, symlink } from 'node:fs/promises';
+import { readFile, realpath, stat, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Config, PluginInput } from '@opencode-ai/plugin';
@@ -65,6 +65,30 @@ describe('agentPlugins plugin', () => {
 
       const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
       expect(messages).toContain('plugin loading');
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
+  it('registers a skills dir that ships extra skill resources (§5.6)', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
+      'skills/hello/references/notes.md': '# Notes\n\nReferenced by the skill.\n',
+    });
+    try {
+      const root = await realpath(plugin.root);
+      const input = pluginInput();
+      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
+      const config = {} as RuntimeConfig;
+      await hooks.config!(config);
+
+      // Registration is directory-granular: the resource file is not a skill
+      // and adds no warning, while the registered dir exposes it to the host.
+      expect(config.skills?.paths).toEqual([`${root}/skills`]);
+      expect(await readFile(join(root, 'skills/hello/references/notes.md'), 'utf8')).toBe(
+        '# Notes\n\nReferenced by the skill.\n',
+      );
     } finally {
       await plugin.cleanup();
     }

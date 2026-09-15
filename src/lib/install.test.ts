@@ -165,6 +165,42 @@ describe('applyInstall', () => {
     }
   });
 
+  it('installs skill resource files alongside SKILL.md (§5.6)', async () => {
+    const fixture = await gitBareFixture({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+      'skills/hello/references/notes.md': '# Notes\n\nReferenced by the skill.\n',
+    });
+    const store = await tempDir('oap-lib-install-');
+    const configPath = join(store.root, 'opencode.json');
+    const env = storeEnv(store.root);
+    try {
+      const prepared = await prepareInstall(fixture.source, process.cwd(), env);
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok || prepared.plan === undefined) return;
+      // Resource files are neither skills nor warnings: only `hello` registers.
+      expect(prepared.plan.validated.skills).toEqual(['hello']);
+      expect(prepared.plan.validated.warnings).toEqual([]);
+
+      const result = await applyInstall(prepared.plan, {
+        configScope: { kind: 'custom', path: configPath },
+        env,
+        noRegister: true,
+      });
+      expect(result.ok).toBe(true);
+
+      // The export is the whole tree: the resource file reaches the store too.
+      const root = installedRootFor(fixture.slug, env);
+      expect(await readFile(join(root, 'skills/hello/references/notes.md'), 'utf8')).toBe(
+        '# Notes\n\nReferenced by the skill.\n',
+      );
+      expect(await stat(join(root, 'skills/hello/SKILL.md')).catch(() => null)).not.toBeNull();
+    } finally {
+      await fixture.cleanup();
+      await store.cleanup();
+    }
+  });
+
   it('cleans the staging clone when the subdir fails validation (§5.12.1)', async () => {
     const fixture = await gitBareFixture({
       'packages/alpha/plugin.json': '{ not json',
