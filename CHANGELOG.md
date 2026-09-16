@@ -8,61 +8,83 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-16
+
 ### Added
 
-- Agent Plugins core (`src/lib/`): the shared, opencode-free implementation
-  of the spec conformance rules from `docs/design.md` — manifest validation
-  (Ajv against the vendored closed schema, unknown-field reclassification),
-  skill discovery/validation (frontmatter parsing, nested-`SKILL.md` guard),
-  `mcp.json` translation to OpenCode's `local`/`remote` config (stdio env
-  injection of `PLUGIN_ROOT`/`PLUGIN_DATA`, remote URL/header rules, `sse`
-  skipped), path containment + placeholder expansion, source parsing and
-  store resolution, client store layout (`installed`, `meta`, `backups`,
-  `data`), the failure taxonomy, and the shared install/update/remove/doctor
-  pipeline.
-- Plugin registration pipeline (`src/register.ts`): resolve → validate →
-  discover → register with user-config-wins collision handling, `prefix`
-  option, per-plugin failure isolation, PLUGIN_DATA creation, and structured
-  summaries — all through the `config` hook, never throwing.
-- CLI commands (`opencode-agent-plugins`): `install` (fetch → validate →
-  preview → confirm → register, `--dry-run`, `--no-register`), `remove`,
-  `check` (drift via `ls-remote`, tag/SHA semantics), `update` (staging →
-  validate → atomic `.old-*` swap), `list`, `doctor`, and `prune` — with
-  JSONC-preserving config edits (atomic writes + timestamped backups).
-- Unit/integration/CLI tests: spec-derived validation cases, plugin-entry
-  integration against the stub client, and end-to-end lifecycle tests against
-  a local git fixture (install/check/update/remove).
+- Initial release of the Agent Plugins client for OpenCode
+  (Agent Plugins specification v1.0.0): an OpenCode plugin that validates
+  Agent Plugins packages and registers their skills and MCP servers, and
+  a CLI that installs, updates, removes, and inspects them.
+- Plugin entry for the OpenCode `plugin` array that resolves each
+  configured source, validates the package against the specification, and
+  registers its capabilities through the `config` hook — with per-plugin
+  failure isolation, user-config-wins collision handling, and no network
+  access at startup.
+- Plugin options: `plugins` (a single source or a list of sources;
+  required), `prefix` (namespaces MCP server names as
+  `<plugin-name>-<server>`, replacing invalid characters with `-`), and
+  `logLevel` (`debug`, `info`, `warn`, `error`; default `info`). Unknown
+  keys warn and are ignored.
+- Skill registration: discovers `skills/<name>/SKILL.md` (one level, no
+  recursion), validates the directory name and frontmatter, and adds the
+  plugin's `skills/` directory to `config.skills.paths` without copying
+  files (only when at least one valid skill remains). An invalid skill is
+  skipped with a warning while the plugin's other skills still register;
+  a skill-name collision with user config or another plugin skips the
+  plugin's whole `skills/` directory.
+- MCP server registration: `mcp.json` `stdio` servers become `local`
+  entries with `PLUGIN_ROOT` and a persistent `PLUGIN_DATA` directory
+  injected into the environment, `streamable-http` servers become
+  `remote` entries, and unsupported `sse` servers are skipped with a
+  warning.
+- `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` expansion in stdio `args`,
+  environment values, and `cwd`, plus remote MCP server rules: absolute
+  HTTP(S) URLs, no userinfo or fragment, HTTPS for non-loopback hosts,
+  and case-insensitively unique header names.
+- Path containment: the `skills/` tree and stdio `command`/`cwd` values
+  are resolved against the plugin root — an escaping skill entry disables
+  the plugin's `skills/` registration, and an escaping `command` or `cwd`
+  skips that server entry.
+- Plugin sources: local paths (absolute, `~/...`, or relative to the
+  workspace; used in place and never copied), git URLs (`https://`,
+  `git+https://`, `ssh://`, `git+ssh://`, and the scp-like
+  `git@host:path`) with optional `#ref` and `#ref:subdir` fragments to
+  pin a branch, tag, or commit and select a monorepo subdirectory, and
+  installed plugin names.
+- CLI commands (`npx opencode-agent-plugins <command>`, Node.js >= 26):
+    - `install <source>` — fetch git sources (or use paths in place),
+      validate, preview (skills, stdio commands and args, remote URLs and
+      redacted header values), confirm, and register, with `--ref`,
+      `--global`/`--config`, `--yes`, `--dry-run`, and `--no-register`.
+    - `remove <name>` — unregister the plugin and delete its store entry
+      and `PLUGIN_DATA` (`--keep-data` keeps the data directory,
+      `--dry-run` prints the plan); path-sourced plugins are removed by
+      editing the config.
+    - `check [<name>...]` — read-only update check over the recorded
+      refs, reporting `up-to-date`, `update-available`, `pinned`,
+      `moved-tag`, `unreachable`, `corrupted`, or `local-path`; exits
+      with code 2 when an update is available.
+    - `update [<name>...]` — stage, validate, and swap each update into
+      the store, restoring the previous tree on failure and leaving
+      `PLUGIN_DATA` untouched; `--dry-run` prints the plan and writes
+      nothing, and `--force` follows a moved tag.
+    - `list` — list installed plugins with URL, ref/subdir, resolved
+      commit, manifest version, and status.
+    - `doctor` — read-only store/config drift report; exits with code 2
+      when issues are found.
+    - `prune` — remove what `doctor` reports as orphaned or stale in the
+      selected config (references in another scope's config are not
+      checked).
+- Client store under `<data-home>/opencode/agent-plugins/`: `installed/`
+  trees pinned at the resolved commit, per-plugin `meta/` records,
+  persistent `data/` directories for `PLUGIN_DATA`, and `backups/` for
+  config edits.
+- JSONC-preserving config edits (comments and formatting outside the
+  `plugin` array stay intact), with a timestamped backup of the previous
+  config under the store's `backups/`; `opencode.jsonc` wins over
+  `opencode.json` in the same scope, and `install` offers to add the
+  `opencode-agent-plugins` loader entry when the config has none.
 
-### Changed
-
-- Build now copies the vendored schemas into `build/schemas/` (loaded via
-  `createRequire` at runtime, never fetched).
-- `package.json` dependencies: added `ajv` and `jsonc-parser` (pinned).
-- Project scaffold (already present from the initial commit): TypeScript
-  (ESM, `tsc` to `build/`) with a base/build/test tsconfig split, Vitest,
-  oxlint, Prettier, Markdownlint, Knip, Husky pre-commit, Docker
-  multi-stage quality gate, and a CI workflow (`ci`, `docker`, `release`
-  jobs).
-- Switched linting from ESLint + typescript-eslint to oxlint
-  (`oxlint.config.ts` replaces `eslint.config.mjs`, correctness category
-  plus the project's explicit `max-lines` / `max-lines-per-function` /
-  `no-unused-vars` / `preserve-caught-error` gates; ESLint, `@eslint/js`
-  and `typescript-eslint` removed from `devDependencies`).
-- Upgraded TypeScript to 7.0.2 (typescript-eslint does not support TS 7;
-  the oxlint switch unblocks the upgrade).
-
-### Fixed
-
-- CLI now announces which config file it edited when `opencode.jsonc` wins
-  over `opencode.json` in the target scope (§5.11), and the `.jsonc`
-  preference now also applies to the `--global` scope (matching OpenCode's
-  own config lookup, which probes `opencode.jsonc` first).
-- `install --no-register` prints the config snippet for local path sources
-  too (not just git URLs, §5.11), and the success message no longer claims a
-  registration happened when the config edit was skipped (it reports
-  "not registered" and points at the printed snippet).
-- Git installs and updates now stage the tree shallow at the commit
-  `ls-remote` resolved (§5.12.1) — `--depth 1` where the transport allows a
-  raw-SHA fetch, with a full clone only as a fallback — instead of
-  full-cloning HEAD/SHA installs and cloning at the ref name, so the
-  recorded `resolvedCommit` always matches the installed tree.
+[unreleased]: https://github.com/ameshkov/opencode-agent-plugins/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ameshkov/opencode-agent-plugins/releases/tag/v0.1.0

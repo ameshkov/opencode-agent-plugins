@@ -1,5 +1,5 @@
 /**
- * Plugin source parsing and startup resolution (`docs/design.md` §5.3).
+ * Plugin source parsing and startup resolution (`docs/explanation/design.md` §5.3).
  *
  * Source grammar:
  *

@@ -1,5 +1,5 @@
 /**
- * `removePlugin` robustness (`docs/design.md` §5.12.2): a missing config
+ * `removePlugin` robustness (`docs/explanation/design.md` §5.12.2): a missing config
  * reports "not registered" instead of a JSONC parse error, and a failed store
  * deletion is reported as a structured failure — never a raw rejection —
  * after the config entry has already been removed.

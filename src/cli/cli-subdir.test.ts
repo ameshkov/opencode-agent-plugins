@@ -1,5 +1,5 @@
 /**
- * CLI monorepo subpath scenarios (`docs/design.md` §5.3.4, §9.2): two subdirs
+ * CLI monorepo subpath scenarios (`docs/explanation/design.md` §5.3.4, §9.2): two subdirs
  * of one repository install side by side, `list` shows the subdir, `--ref`
  * overrides only the ref, and update/remove on one leaves the other intact.
  */

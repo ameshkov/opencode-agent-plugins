@@ -1,6 +1,6 @@
 /**
  * `applyInstall` guard tests — a fatally-invalid plan must abort with nothing
- * changed on disk (`docs/design.md` §5.12.1).
+ * changed on disk (`docs/explanation/design.md` §5.12.1).
  */
 
 import { readFile, stat, writeFile } from 'node:fs/promises';

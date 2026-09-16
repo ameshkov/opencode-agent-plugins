@@ -1,5 +1,5 @@
 /**
- * Client store layout and metadata (`docs/design.md` §5.3.2).
+ * Client store layout and metadata (`docs/explanation/design.md` §5.3.2).
  *
  * The store keeps git-sourced plugin copies under `installed/<slug>/` (an
  * exported tree with no `.git`), client metadata under `meta/<slug>.json`

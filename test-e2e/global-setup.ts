@@ -5,7 +5,7 @@
  * context, so no file can build the image twice):
  *
  * 1. verifies Docker is reachable — this suite is a CI release gate, so it
- *    hard-fails instead of silently skipping (`docs/design.md` §9.2.4);
+ *    hard-fails instead of silently skipping (`docs/explanation/design.md` §9.2.4);
  * 2. builds the e2e image (`test-e2e/Dockerfile`) once;
  * 3. records the built image tag in {@link IMAGE_CACHE_FILE}, which every
  *    test file reads via `helpers/image.ts`.

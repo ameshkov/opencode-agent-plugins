@@ -1,5 +1,5 @@
 /**
- * Update check and apply (`docs/design.md` §5.12.3).
+ * Update check and apply (`docs/explanation/design.md` §5.12.3).
  *
  * `check` is read-only and network-only: it resolves the recorded ref
  * remotely and compares with the recorded commit. `update` re-fetches into a

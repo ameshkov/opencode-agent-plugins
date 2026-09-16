@@ -1,5 +1,5 @@
 /**
- * Status records for `check` / `update` runs (`docs/design.md` §5.11/§5.12.3).
+ * Status records for `check` / `update` runs (`docs/explanation/design.md` §5.11/§5.12.3).
  *
  * Shared by the read-only check engine and the update swap path so both
  * surfaces report the same record shape and failure classifications.

@@ -1,4 +1,4 @@
-// Enforces the failure-taxonomy invariant (docs/design.md §6): every kind
+// Enforces the failure-taxonomy invariant (docs/explanation/design.md §6): every kind
 // declared in the `FailureKind` union (`src/lib/errors.ts`) must be produced
 // by a `failure('<kind>', ...)` literal somewhere in production `src/`, and
 // every such literal must refer to a declared kind. This keeps the taxonomy
@@ -282,7 +282,7 @@ function failWithOffenders(offenders: Offender[]): never {
     "Every kind in the FailureKind union must be produced by a `failure('<kind>', ...)`",
   );
   console.error(
-    'call in production src/ (plugin load or CLI), matching docs/design.md §6 — and every',
+    'call in production src/ (plugin load or CLI), matching docs/explanation/design.md §6 — and every',
   );
   console.error("failure('<kind>') literal must be a declared kind. Add or remove kinds in sync.");
   process.exit(1);

@@ -4,7 +4,7 @@
  *
  * Registered in mcp.json with a bare `command: "e2e-path-tool"` (no `./`),
  * so opencode must resolve it through PATH — the behavior is delegated to
- * the host's spawn (docs/design.md §7) and pinned here.
+ * the host's spawn (docs/explanation/design.md §7) and pinned here.
  *
  * Dependency-free minimal MCP stdio transport (see fixtures/git-plugin's
  * serve.js for the protocol notes): initialize, ping, tools/list, tools/call.

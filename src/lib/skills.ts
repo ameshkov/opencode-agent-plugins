@@ -1,5 +1,5 @@
 /**
- * Skill discovery and validation (`docs/design.md` §5.6).
+ * Skill discovery and validation (`docs/explanation/design.md` §5.6).
  *
  * Skills live at the fixed location `skills/<name>/SKILL.md` — immediate
  * children only, no recursion. Missing `skills/` is a valid absence. Each

@@ -1,5 +1,5 @@
 /**
- * Store/config health report (`docs/design.md` §5.11 `doctor` / `prune`).
+ * Store/config health report (`docs/explanation/design.md` §5.11 `doctor` / `prune`).
  *
  * `doctor` is read-only and reports: config entries with no store entry,
  * store entries referenced by no config entry, orphaned `PLUGIN_DATA`

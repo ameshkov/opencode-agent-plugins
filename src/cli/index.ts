@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI entry (`docs/design.md` §5.11): the `opencode-agent-plugins` binary.
+ * CLI entry (`docs/explanation/design.md` §5.11): the `opencode-agent-plugins` binary.
  *
  * Thin wrapper over `src/lib/`, run on Node ≥ 26 outside OpenCode. The `git`
  * binary is required only by git-backed commands (`install` from a URL,

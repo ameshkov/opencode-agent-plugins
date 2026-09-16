@@ -1,7 +1,7 @@
 /**
  * Failure taxonomy shared by the plugin and the CLI.
  *
- * Mirrors `docs/design.md` §6: each row of the taxonomy table maps a spec
+ * Mirrors `docs/explanation/design.md` §6: each row of the taxonomy table maps a spec
  * failure condition to a failure boundary and a report level. Objects of type
  * {@link Failure} are the currency between `src/lib/` and the callers — the
  * plugin logs them through the structured logger, the CLI prints them — so
@@ -14,7 +14,7 @@ import type { Logger } from '../utils/index.js';
 type FailureLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /**
- * Failure kinds, one per taxonomy row (`docs/design.md` §6).
+ * Failure kinds, one per taxonomy row (`docs/explanation/design.md` §6).
  *
  * The string values are stable identifiers used in tests and logs.
  */
@@ -56,7 +56,7 @@ export interface Failure {
 }
 
 /**
- * Maps every failure kind to its report level, per `docs/design.md` §6.
+ * Maps every failure kind to its report level, per `docs/explanation/design.md` §6.
  *
  * @internal Exported for tests only; not part of the public module API. The
  * test suite iterates its keys to prove the level mapping is exhaustive for

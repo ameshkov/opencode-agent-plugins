@@ -1,5 +1,5 @@
 /**
- * Client data directory management (`docs/design.md` §5.8).
+ * Client data directory management (`docs/explanation/design.md` §5.8).
  *
  * The client keeps its managed data under
  * `<data-home>/opencode/agent-plugins/` (`data-home` follows opencode's own

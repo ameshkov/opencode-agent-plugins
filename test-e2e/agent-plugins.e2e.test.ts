@@ -1,5 +1,5 @@
 /**
- * Docker e2e tests for the agent-plugins client (`docs/design.md` §9.1,
+ * Docker e2e tests for the agent-plugins client (`docs/explanation/design.md` §9.1,
  * §9.2.4): the core config-hook registration contract.
  *
  * Everything opencode-related runs inside a container built from

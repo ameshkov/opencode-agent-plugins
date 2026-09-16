@@ -1,5 +1,5 @@
 // Dev-only helper to vendor or refresh the two Agent Plugins JSON schemas
-// under src/schemas/ (docs/design.md §5.4).
+// under src/schemas/ (docs/explanation/design.md §5.4).
 //
 // The plugin must never fetch a schema at runtime ("Clients MUST NOT
 // retrieve a schema while loading a plugin"), so the schemas are committed.
@@ -8,7 +8,7 @@
 //   2. Asserts each top-level schema actually encodes closedness
 //      (`additionalProperties: false` / `unevaluatedProperties: false` at
 //      top level and per `$defs` entry) — reclassification of unknown keys
-//      as report-and-ignore (docs/design.md §5.4) is meaningless against an
+//      as report-and-ignore (docs/explanation/design.md §5.4) is meaningless against an
 //      open schema.
 //   3. Writes the downloaded bytes to src/schemas/ (only if they changed or
 //      the file is missing), and reports a summary.

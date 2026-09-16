@@ -359,6 +359,24 @@ describe('CLI lifecycle', () => {
     expect(exitCode).toBe(2);
   });
 
+  it('update --dry-run prints the plan and leaves the install untouched', async () => {
+    vi.mocked(console.log).mockClear();
+    const before = await readMeta(slug(), env);
+    // --yes proves the dry-run check wins over the apply path.
+    const exitCode = await cmdUpdate(argsOf('update', [], ['--yes', '--dry-run']));
+    expect(exitCode).toBe(0);
+    const logs = vi.mocked(console.log).mock.calls.map((call) => String(call[0]));
+    expect(logs.some((message) => message.includes('update-available'))).toBe(true);
+    expect(logs.some((message) => message.includes('dry-run: nothing was written.'))).toBe(true);
+    const after = await readMeta(slug(), env);
+    expect(after?.resolvedCommit).toBe(before?.resolvedCommit);
+    expect(after?.manifestVersion).toBe('1.0.0');
+    const manifest = JSON.parse(
+      await readFile(join(installedRootFor(slug(), env), 'plugin.json'), 'utf8'),
+    ) as { version: string };
+    expect(manifest.version).toBe('1.0.0');
+  });
+
   it('update applies the new version and preserves PLUGIN_DATA', async () => {
     const dataDir = join(dataHome.root, 'opencode/agent-plugins/data', slug());
     await mkdir(dataDir, { recursive: true });

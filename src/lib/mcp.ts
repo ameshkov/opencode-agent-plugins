@@ -1,5 +1,5 @@
 /**
- * `mcp.json` parsing, validation and translation (`docs/design.md` §5.7).
+ * `mcp.json` parsing, validation and translation (`docs/explanation/design.md` §5.7).
  *
  * The portable format is a closed schema (`$schema` + `mcpServers` with
  * `stdio` / `streamable-http` / `sse` entries). Each entry is validated

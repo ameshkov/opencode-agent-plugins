@@ -1,5 +1,5 @@
 /**
- * `plugin.json` parsing and validation (`docs/design.md` §5.4).
+ * `plugin.json` parsing and validation (`docs/explanation/design.md` §5.4).
  *
  * The manifest is a closed schema validated with Ajv against the vendored
  * Agent Plugins schema (`src/schemas/1.0.0-plugin.schema.json`), which is
@@ -26,7 +26,7 @@ const requireJson = createRequire(import.meta.url);
 const PLUGIN_SCHEMA_1_0_0 = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 
 /**
- * Canonical schema identifiers this client implements (`docs/design.md`
+ * Canonical schema identifiers this client implements (`docs/explanation/design.md`
  * §5.9). Adding a new spec version is a one-line extension of this map.
  */
 const SUPPORTED_PLUGIN_SCHEMAS: ReadonlySet<string> = new Set([PLUGIN_SCHEMA_1_0_0]);

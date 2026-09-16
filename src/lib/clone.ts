@@ -1,5 +1,5 @@
 /**
- * Tree staging from git sources (`docs/design.md` §5.12.1, §5.3.2).
+ * Tree staging from git sources (`docs/explanation/design.md` §5.12.1, §5.3.2).
  *
  * The clone strategy is shallow-first at the resolved commit: `--depth 1`
  * where the transport allows fetching the resolved SHA, falling back to a
@@ -44,7 +44,7 @@ export async function stageTree(
 }
 
 /**
- * Derives the plugin root inside a staged clone (`docs/design.md` §5.3.4).
+ * Derives the plugin root inside a staged clone (`docs/explanation/design.md` §5.3.4).
  *
  * Without a subdir the staged clone root is the plugin root. With one, the
  * selected directory is realpath-resolved and must exist, be a directory,

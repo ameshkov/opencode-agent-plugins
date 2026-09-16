@@ -5,7 +5,7 @@ import type { LogLevel } from './utils/index.js';
  * Plugin options known to this plugin, in their validated, normalized form.
  *
  * Mirrors the `opencode-agent-plugins` entry in the user's `opencode.json`
- * `plugin` array — see `docs/design.md` §3.1.
+ * `plugin` array — see `docs/explanation/design.md` §3.1.
  */
 interface ValidatedOptions {
   /** Plugin source(s): local path, git URL, or an installed plugin name. */
@@ -21,7 +21,7 @@ interface ValidatedOptions {
  *
  * Strict on known keys (unknown keys are reported as warnings by
  * {@link parseOptions}, never accepted); defaults applied per
- * `docs/design.md` §3.1.
+ * `docs/explanation/design.md` §3.1.
  */
 const optionsSchema = z
   .object({

@@ -7,7 +7,7 @@
  * form the CLI edits). The test runs CLI commands via `docker exec`, then
  * bootstraps opencode (the `/app/ctrl/serve` marker), drives sessions, and
  * `restart()`s the SAME container (filesystem preserved) to prove what the
- * NEXT opencode start sees (docs/design.md §5.12.4: registrations only change
+ * NEXT opencode start sees (docs/explanation/design.md §5.12.4: registrations only change
  * at startup).
  *
  * Covered: install→restart picks up the git-sourced plugin (C1), no live

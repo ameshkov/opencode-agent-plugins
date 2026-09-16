@@ -1,7 +1,7 @@
 /**
  * Docker e2e tests for remote (streamable-http) MCP registration and for the
  * behaviors the design delegates to opencode's MCP client and pins here
- * (`docs/design.md` §7 "Delegated-to-host requirements"): header forwarding,
+ * (`docs/explanation/design.md` §7 "Delegated-to-host requirements"): header forwarding,
  * client-generated header precedence, redirect header forwarding, and
  * bare-command PATH search. The design states these are asserted in E2E, not
  * unit tests (§5.7, §7); this suite is the tripwire.

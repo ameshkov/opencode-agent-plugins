@@ -1,5 +1,5 @@
 /**
- * OpenCode Agent Plugins entry point (`docs/design.md` §5.1).
+ * OpenCode Agent Plugins entry point (`docs/explanation/design.md` §5.1).
  *
  * The only hook is `config`: it resolves each configured source (local paths
  * in place, git sources against the client store — never fetching at

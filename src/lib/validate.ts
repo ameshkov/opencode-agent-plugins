@@ -1,5 +1,5 @@
 /**
- * Shared plugin-tree validation pipeline (`docs/design.md` §5.12.1).
+ * Shared plugin-tree validation pipeline (`docs/explanation/design.md` §5.12.1).
  *
  * The CLI validates exactly what the plugin will load: manifest → skills →
  * MCP, against the same `src/lib/` modules. `install` can therefore never

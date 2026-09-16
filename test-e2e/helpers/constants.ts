@@ -1,5 +1,5 @@
 /**
- * Shared constants for the docker e2e suite (docs/design.md §9.2.4).
+ * Shared constants for the docker e2e suite (docs/explanation/design.md §9.2.4).
  *
  * The paths below are in-container paths: everything opencode-related runs
  * inside the image built from `test-e2e/Dockerfile`, so assertions must use

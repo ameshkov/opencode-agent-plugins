@@ -4,7 +4,7 @@ How to build, run, and debug the `opencode-agent-plugins` plugin against a
 live opencode instance. For architecture and contribution rules, see
 [AGENTS.md](./AGENTS.md); for the user-facing pitch, see
 [README.md](./README.md); for the feature plan, see
-[docs/design.md](./docs/design.md).
+[docs/explanation/design.md](./docs/explanation/design.md).
 
 ## Table of Contents
 
@@ -284,9 +284,9 @@ Notes:
 ### E2E Tests (Docker)
 
 The e2e suite in [`test-e2e/`](./test-e2e) is the release gate from
-`docs/design.md` §9.1/§9.2.4: it boots a **real opencode binary** and the
-fixture plugin package inside a container and asserts the config hook's
-registration actually reaches the model request.
+`docs/explanation/design.md` §9.1/§9.2.4: it boots a **real opencode
+binary** and the fixture plugin package inside a container and asserts the
+config hook's registration actually reaches the model request.
 
 Everything opencode-related runs in Docker — no opencode is installed on
 the host:
@@ -391,6 +391,6 @@ Common issues and their fixes:
   plugin surface contract.
 - [README.md](./README.md) — user-facing pitch and configuration.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
-- [docs/design.md](./docs/design.md) — the design document: the
-  specification conformance checklist, architecture, and component
-  plans.
+- [docs/explanation/design.md](./docs/explanation/design.md) — the design
+  document: the specification conformance checklist, architecture, and
+  component plans.

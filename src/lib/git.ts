@@ -1,5 +1,5 @@
 /**
- * Git ref resolution for the CLI (`docs/design.md` §5.12).
+ * Git ref resolution for the CLI (`docs/explanation/design.md` §5.12).
  *
  * `git` is required only by git-backed commands (`install` from a URL,
  * `check`, `update`) and is checked lazily via {@link gitAvailable}. Ref

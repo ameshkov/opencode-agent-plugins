@@ -1,5 +1,5 @@
 /**
- * Remote MCP URL and header validation (`docs/design.md` §5.7).
+ * Remote MCP URL and header validation (`docs/explanation/design.md` §5.7).
  *
  * The spec's remote-server requirements are not fully expressible in JSON
  * Schema, so they are enforced by custom checks here: the URL must be

@@ -5,7 +5,7 @@
  * Reports the subprocess environment it was launched with (PLUGIN_ROOT,
  * PLUGIN_DATA, cwd, and whether the data dir exists) inside the `echo_ping`
  * tool RESULT, so the e2e test can assert the registration contract from the
- * executed tool round trip (docs/design.md §5.7–§5.8): environment injection,
+ * executed tool round trip (docs/explanation/design.md §5.7–§5.8): environment injection,
  * cwd defaulting, and the eagerly-created PLUGIN_DATA directory.
  *
  * It also proves placeholder expansion (§5.5): the fixture's mcp.json

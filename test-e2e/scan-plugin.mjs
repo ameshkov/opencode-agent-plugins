@@ -148,7 +148,7 @@ async function scanSkillsLayout(root) {
     }
     for (const file of await walkFiles(join(skillsDir, entry.name))) {
       // `SKILL.md` directly inside the skill dir is the skill itself; only
-      // deeper files are nested (docs/design.md §5.6).
+      // deeper files are nested (docs/explanation/design.md §5.6).
       if (file !== 'SKILL.md' && file.endsWith('SKILL.md')) {
         layout.nestedSkillFiles.push(`${entry.name}/${file}`);
       }

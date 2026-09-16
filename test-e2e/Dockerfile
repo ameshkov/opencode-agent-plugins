@@ -4,7 +4,7 @@
 # repo, the fixture plugin packages, and a fake OpenAI-compatible model server.
 # EVERYTHING opencode-related runs inside this container; the vitest host only
 # starts/stops containers through testcontainers and asserts on the captured
-# model request (docs/design.md §9.1, §9.2.4).
+# model request (docs/explanation/design.md §9.1, §9.2.4).
 #
 # Build (from the repo root):
 #   docker build -f test-e2e/Dockerfile \

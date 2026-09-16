@@ -1,5 +1,5 @@
 /**
- * Plugin install lifecycle (`docs/design.md` §5.12.1).
+ * Plugin install lifecycle (`docs/explanation/design.md` §5.12.1).
  *
  * Install fetches the source (git URL only — path sources are used in place),
  * validates the staged copy with the full pipeline, previews what will be

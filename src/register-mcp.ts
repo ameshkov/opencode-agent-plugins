@@ -1,5 +1,5 @@
 /**
- * MCP server registration for the plugin entry (`docs/design.md` §5.7).
+ * MCP server registration for the plugin entry (`docs/explanation/design.md` §5.7).
  *
  * Translates validated `McpServerSpec`s into opencode `config.mcp` entries,
  * applying name sanitization and the user-config-wins collision rule. Lives

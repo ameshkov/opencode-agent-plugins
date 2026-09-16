@@ -1,5 +1,5 @@
 /**
- * Skills registration for the plugin entry (`docs/design.md` §5.6).
+ * Skills registration for the plugin entry (`docs/explanation/design.md` §5.6).
  *
  * Pushes a plugin's `skills/` dir into `config.skills.paths` following the
  * user-config-wins collision rule: a colliding skill name skips the plugin's

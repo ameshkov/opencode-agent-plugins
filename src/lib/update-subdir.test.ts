@@ -1,5 +1,5 @@
 /**
- * Subdir update behavior (`docs/design.md` §5.3.4, §5.12.3): an update
+ * Subdir update behavior (`docs/explanation/design.md` §5.3.4, §5.12.3): an update
  * re-derives the recorded subdir, swaps only that tree, keeps the previous
  * install when the subdir disappears, and preserves the metadata `subdir`.
  */

@@ -1,6 +1,6 @@
 /**
  * JSONC-preserving editing of the OpenCode config's `plugin` array
- * (`docs/design.md` §5.11–§5.12.4).
+ * (`docs/explanation/design.md` §5.11–§5.12.4).
  *
  * The CLI registers/removes plugin sources by editing only the `plugin` array
  * of the resolved config file, keeping comments and formatting everywhere

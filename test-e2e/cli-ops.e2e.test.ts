@@ -2,7 +2,7 @@
  * Docker e2e tests for the CLI lifecycle — no opencode server booted, so
  * these scenarios are cheap: they `docker exec` the `opencode-agent-plugins`
  * binary inside the `cli` scenario container and assert on the resulting
- * store/config filesystem (docs/design.md §5.12 — staging, validation,
+ * store/config filesystem (docs/explanation/design.md §5.12 — staging, validation,
  * atomic swap, doctor/prune, ref semantics).
  *
  * The container boots with the `opencode-agent-plugins` config tuple

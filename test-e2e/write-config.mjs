@@ -6,7 +6,7 @@
  * (`["/app/plugin/build/index.js", { plugins: [...] }]`) so the real config
  * hook does the registration. `static` mode writes the exact values the hook
  * would produce directly into the config — the baseline the design proves
- * behaviorally equivalent (docs/design.md §9.1).
+ * behaviorally equivalent (docs/explanation/design.md §9.1).
  *
  * `cli`-style modes register the plugin under its npm package name
  * (`["opencode-agent-plugins", { plugins: [...] }]`) — the tuple form the CLI

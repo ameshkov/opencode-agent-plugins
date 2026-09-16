@@ -1,5 +1,5 @@
 /**
- * Plugin remove lifecycle (`docs/design.md` §5.12.2).
+ * Plugin remove lifecycle (`docs/explanation/design.md` §5.12.2).
  *
  * Remove resolves a name to exactly one store entry (ambiguous manifest names
  * are refused, never guessed), unregisters the entry's original source from

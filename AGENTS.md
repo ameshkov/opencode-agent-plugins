@@ -12,7 +12,8 @@ and registers their skills and MCP servers into OpenCode. The same npm
 package also exposes a CLI that manages the plugin store and the user's
 OpenCode config.
 
-The authoritative design is [`docs/design.md`](./docs/design.md) — read the
+The authoritative design is
+[`docs/explanation/design.md`](./docs/explanation/design.md) — read the
 relevant section before implementing or changing a component. Behavior
 described there (failure taxonomy, containment rules, placeholder expansion,
 options schema) must match the code; when they diverge, the design is the
@@ -33,7 +34,7 @@ opencode-agent-plugins/
 │   ├── cli/                # opencode-agent-plugins binary: entry, flag parsing, prompts,
 │   │                         output, install/remove/update/inspect commands
 │   ├── lib/                # shared core — no @opencode-ai* runtime deps
-│   │                         (per docs/design.md §4.1); one module per concern:
+│   │                         (per docs/explanation/design.md §4.1); one module per concern:
 │   │   ├── resolve.ts      # source parsing (path | git URL [#fragment]) + store lookup
 │   │   ├── git.ts          # git availability, ls-remote, ref resolution
 │   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
@@ -65,7 +66,12 @@ opencode-agent-plugins/
 │                             opt-in top-plugins) driven by Dockerfile +
 │                             bootstrap.mjs + scan-plugin.mjs and fixtures/
 ├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
-└── docs/design.md          # the design document
+└── docs/                    # documentation
+    ├── explanation/         # architecture and design docs
+    │   └── design.md        # the design document
+    └── reference/           # user-facing reference docs
+        ├── cli.md           # CLI commands, flags, statuses, and exit codes
+        └── configuration.md # plugin entry, options, sources, and store
 ```
 
 The project has **two entry points**, each compiling independently and
@@ -118,14 +124,15 @@ This plugin talks to opencode exclusively through the `config` hook:
   entry or `skills.paths` entry that collides with a plugin registration is
   left untouched; the plugin's registration is skipped and reported. Skills
   registration is directory-granular, so a colliding skill name skips the
-  plugin's whole `skills/` dir (user-config-wins, `docs/design.md` §5.6).
+  plugin's whole `skills/` dir (user-config-wins,
+  `docs/explanation/design.md` §5.6).
 - **No network access at startup.** Git URLs and installed plugin names
   resolve against the client store; sources that cannot be resolved without
   fetching are skipped with a warning. Startup stays fast and offline
   (installing/updating is the CLI's job).
 - **Failure isolation.** Every per-plugin failure is caught, mapped through
-  the failure taxonomy (`docs/design.md` §6), and logged; the hook never
-  throws. Only the narrowest unit is dropped — reject plugin → invalid
+  the failure taxonomy (`docs/explanation/design.md` §6), and logged; the hook
+  never throws. Only the narrowest unit is dropped — reject plugin → invalid
   component type → skip skill → invalid server entry → deny path.
 - **`config.skills` may be missing from the SDK type.** Normalize
   (`config.skills ??= { paths: [] }`) through a local cast and treat the

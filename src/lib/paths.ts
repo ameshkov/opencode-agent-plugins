@@ -1,5 +1,5 @@
 /**
- * Path containment and placeholder expansion (`docs/design.md` §5.5).
+ * Path containment and placeholder expansion (`docs/explanation/design.md` §5.5).
  *
  * The Agent Plugins spec requires a filesystem-resolved package boundary:
  * every package path the client touches must resolve inside the plugin root,

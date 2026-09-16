@@ -1,5 +1,5 @@
 /**
- * Registration pipeline for the plugin entry (`docs/design.md` §5.1–§5.8).
+ * Registration pipeline for the plugin entry (`docs/explanation/design.md` §5.1–§5.8).
  *
  * Everything from source resolution to config mutation happens here. The
  * entry point (`index.ts`) is a thin bootstrap: these functions talk to the
