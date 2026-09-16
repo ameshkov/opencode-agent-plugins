@@ -72,5 +72,9 @@
     "testcontainers": "12.1.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "test"
   }
 }

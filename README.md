@@ -1,6 +1,7 @@
 # opencode-agent-plugins
 
 [![CI](https://github.com/ameshkov/opencode-agent-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/ameshkov/opencode-agent-plugins/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/opencode-agent-plugins)](https://www.npmjs.com/package/opencode-agent-plugins)
 
 An Agent Plugins client for [OpenCode](https://opencode.ai): loads, validates,
 and registers [Agent Plugins](https://agent-plugins.org/specification)
