@@ -146,4 +146,42 @@ describe('doctor', () => {
       await plugin.cleanup();
     }
   });
+
+  it('keeps a store entry referenced through a single-string source (§5.11)', async () => {
+    const home = await tempDir('oap-doctor-');
+    try {
+      const env = storeEnv(home.root);
+      const root = installedRootFor('org-repo', env);
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
+      const meta: StoreMeta = {
+        source: 'https://github.com/org/repo.git',
+        url: 'https://github.com/org/repo.git',
+        resolvedCommit: 'a'.repeat(40),
+        manifestVersion: '1.0.0',
+        installedAt: '2026-09-01T00:00:00.000Z',
+      };
+      await writeMeta('org-repo', meta, env);
+      const configPath = join(home.root, 'opencode.json');
+      await writeFile(
+        configPath,
+        `{
+          "plugins": [
+            {
+              "package": "opencode-agent-plugins",
+              "options": { "plugins": "https://github.com/org/repo.git" }
+            }
+          ]
+        }`,
+        'utf8',
+      );
+      const { runDoctor } = await import('./doctor.js');
+      const report = await runDoctor({ kind: 'custom', path: configPath }, env);
+      // The string-form reference must protect the store entry from prune.
+      expect(report.items.some((item) => item.kind === 'unreferenced-store')).toBe(false);
+      expect(report.items.some((item) => item.kind === 'no-store-entry')).toBe(false);
+    } finally {
+      await home.cleanup();
+    }
+  });
 });

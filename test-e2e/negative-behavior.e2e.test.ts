@@ -1,29 +1,32 @@
 /**
  * Docker e2e tests for the §6 failure taxonomy's most user-visible rows,
  * anchored against a REAL opencode session (the unit layer covers the full
- * taxonomy against a fake Config; this suite pins that a dropped component
- * never breaks the session):
+ * taxonomy against a fake V2 context; this suite pins that a dropped
+ * component never breaks the session):
  *
  * - invalid manifest → that plugin is rejected, the other plugin still loads;
  * - mcp.json $schema version mismatch → MCP disabled, skills still load
  *   (§5.9);
- * - user-authored `mcp.echo` entry → user config wins, our server is skipped
- *   (§3.2, §5.7);
- * - user-authored `skills.paths` entry → user config wins, the plugin's
- *   whole `skills/` dir is skipped and reported (§3.2, §5.6).
+ * - user-authored `mcp.servers.echo` entry → user config wins, our server is
+ *   skipped (§3.2, §5.7);
+ * - user-authored `skills` entry → the host's skill registry keeps the user's
+ *   `hello` skill over the plugin's registration (§3.2, §5.6, §9.1.5).
+ *
+ * V2 wraps MCP tools in Code Mode by default, so callability is probed with
+ * an `execute` call to `tools.echo.echo_ping`.
  */
 
 import { describe, expect, it } from 'vitest';
 import { imageTag } from './helpers/image.js';
 import { withScenario } from './helpers/scenario-run.js';
 import {
+  assistantReplied,
   mainRequestOf,
   systemText,
   toolResultTextOf,
   toolRoundTripOf,
-  toolsOf,
 } from './helpers/capture.js';
-import { OPENCODE_VERSION, TOOL_ECHO } from './helpers/constants.js';
+import { CODE_ECHO, OPENCODE_VERSION } from './helpers/constants.js';
 
 describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
   it(
@@ -32,14 +35,14 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(
         await imageTag(),
         'negative-invalid',
-        { emitToolCall: TOOL_ECHO },
+        { emitToolCall: 'execute', emitToolCode: CODE_ECHO },
         async (scenario) => {
           const result = await scenario.session();
           const roundTrip = toolRoundTripOf(result.captures);
           expect(roundTrip.call, 'the valid plugin must still be callable').toBe(true);
           expect(roundTrip.result).toBe(true);
           expect(toolResultTextOf(result.captures)).toContain('pong hello from e2e');
-          expect(result.prompt.info.role).toBe('assistant');
+          expect(assistantReplied(result.messages)).toBe(true);
         },
       );
     },
@@ -52,11 +55,11 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(await imageTag(), 'negative-mismatch', {}, async (scenario) => {
         const result = await scenario.session();
         const main = mainRequestOf(result.captures);
-        // The plugin's MCP server never reached opencode's config (§5.9).
-        expect(toolsOf(main.request).has(TOOL_ECHO)).toBe(false);
+        // The plugin's MCP server never reached the host registry (§5.9).
+        expect((await scenario.mcpList()).data).toEqual([]);
         // But the skill did reach the session (§5.9 "skills still load").
         expect(systemText(main.request)).toContain('<name>editme</name>');
-        expect(result.prompt.info.role).toBe('assistant');
+        expect(assistantReplied(result.messages)).toBe(true);
       });
     },
     10 * 60 * 1000,
@@ -65,38 +68,48 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
   it(
     'user-authored mcp entry wins: the colliding server is skipped',
     async () => {
-      await withScenario(await imageTag(), 'negative-stub', {}, async (scenario) => {
-        const result = await scenario.session();
-        const main = mainRequestOf(result.captures);
-        // The stub `mcp.echo` (enabled:false) is the user's config — our
-        // `echo` server collided and was skipped; nothing of it is served.
-        expect(toolsOf(main.request).has(TOOL_ECHO), 'user config must win').toBe(false);
-        // The plugin itself still loaded its skills.
-        expect(systemText(main.request)).toContain('<name>hello</name>');
-        expect(result.prompt.info.role).toBe('assistant');
-      });
+      await withScenario(
+        await imageTag(),
+        'negative-stub',
+        { emitToolCall: 'execute', emitToolCode: CODE_ECHO },
+        async (scenario) => {
+          const result = await scenario.session();
+          const main = mainRequestOf(result.captures);
+          // The stub `echo` server (disabled) is the user's config — our
+          // `echo` server collided and was skipped (reported at replay), so
+          // the Code Mode call cannot reach a plugin-provided tool.
+          expect(toolResultTextOf(result.captures)).not.toContain('pong hello from e2e');
+          const servers = (await scenario.mcpList()).data;
+          expect(servers.map((server) => `${server.name}:${server.status.status}`)).toEqual([
+            'echo:disabled',
+          ]);
+          expect(scenario.output()).toContain('user config wins');
+          // The plugin itself still loaded its skills.
+          expect(systemText(main.request)).toContain('<name>hello</name>');
+          expect(assistantReplied(result.messages)).toBe(true);
+        },
+      );
     },
     10 * 60 * 1000,
   );
 
   it(
-    'user-authored skills.paths entry wins: the plugin skills dir is skipped',
+    "user-authored skills entry wins: the host keeps the config skill over the plugin's registration",
     async () => {
       await withScenario(await imageTag(), 'skill-collision', {}, async (scenario) => {
         const result = await scenario.session();
         const main = mainRequestOf(result.captures);
         const system = systemText(main.request);
-        // The user's `hello` skill is still advertised — their
-        // `skills.paths` entry is left untouched (§3.2) ...
+        // The user's `hello` skill is still advertised — their `skills`
+        // entry is left untouched (§3.2) ...
         expect(system).toContain('<name>hello</name>');
-        // ... while the plugin's `skills/` dir was NOT registered: the
-        // fixture's nested `references/SKILL.md` (exposed in `hook` mode via
-        // the recursive host scan, agent-plugins.e2e.test.ts) is gone (§5.6).
-        expect(system).not.toContain('<name>nested</name>');
-        // The collision was reported: user config wins, the plugin's dir is
-        // skipped (§5.6) — the log line surfaces in opencode's printed logs.
-        expect(scenario.output()).toContain('user config wins');
-        expect(result.prompt.info.role).toBe('assistant');
+        expect(system).toContain('A user-authored hello skill shadowing');
+        // ... and V2 enforces config precedence in its skill registry: a
+        // plugin transform cannot override a config skill, so the plugin's
+        // own `hello` description never reaches the model (the client cannot
+        // see config skills from a transform, so the host owns this rule).
+        expect(system).not.toContain('Greets the world in the e2e test');
+        expect(assistantReplied(result.messages)).toBe(true);
       });
     },
     10 * 60 * 1000,

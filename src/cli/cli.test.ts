@@ -185,7 +185,7 @@ describe('CLI lifecycle', () => {
       confirmAnswers.queue.push(false);
       const exitCode = await cmdInstall(argsOf('install', [plugin.root], ['--config', freshPath]));
       expect(exitCode).toBe(1);
-      // Nothing was written: not even the config file's plugin array.
+      // Nothing was written: not even the config file's plugins array.
       expect(await readFile(freshPath, 'utf8')).not.toContain(plugin.root);
       expect(err.mock.calls.some((call) => String(call[0]).includes('aborted'))).toBe(true);
     } finally {
@@ -264,7 +264,9 @@ describe('CLI lifecycle', () => {
         .mock.calls.map((call) => String(call[0]))
         .join('\n');
       expect(logs).toContain('Add this to your opencode config');
-      expect(logs).toContain(`["opencode-agent-plugins", { "plugins": ["${plugin.root}"] }]`);
+      expect(logs).toContain(
+        `{ "package": "opencode-agent-plugins", "options": { "plugins": ["${plugin.root}"] } }`,
+      );
       expect(logs).toContain('not registered');
     } finally {
       await plugin.cleanup();
@@ -289,7 +291,9 @@ describe('CLI lifecycle', () => {
         .mocked(console.log)
         .mock.calls.map((call) => String(call[0]))
         .join('\n');
-      expect(logs).toContain(`["opencode-agent-plugins", { "plugins": ["${fixture.source}"] }]`);
+      expect(logs).toContain(
+        `{ "package": "opencode-agent-plugins", "options": { "plugins": ["${fixture.source}"] } }`,
+      );
       expect(logs).toContain('not registered');
     } finally {
       // The store entry holds no config reference (registration was skipped),

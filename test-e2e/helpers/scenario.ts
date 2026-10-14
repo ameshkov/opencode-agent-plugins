@@ -14,42 +14,94 @@
  * - `exec()` / `cli()` helpers inside the container (cwd `/app/workspace`,
  *   `HOME=/app/opencode-home` so the CLI resolves the same client store the
  *   opencode plugin uses at startup);
- * - session driving (`POST /session` + `POST /session/{id}/message`) and
- *   capture collection.
+ * - session driving through the V2 client (`@opencode/client`:
+ *   `session.create` → `session.prompt` → `session.wait` → `session.context`)
+ *   and capture collection.
  */
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
+import { OpenCode, type McpListOutput, type SkillListOutput } from '@opencode/client';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { expect } from 'vitest';
-import { API_PORT } from './constants.js';
+import { API_PORT, PLUGIN_ID, SERVER_PASSWORD } from './constants.js';
 import { capturesOf, type Capture, type SessionRun } from './capture.js';
 import { execIn, existsIn, markServeIn, readFileIn, type ExecOutcome } from './exec.js';
 
 const execFileP = promisify(execFile);
 
 /** Container environment shared by every scenario. */
-const BASE_ENV = { HOME: '/app/opencode-home' };
+const BASE_ENV = { HOME: '/app/opencode-home', E2E_SERVER_PASSWORD: SERVER_PASSWORD };
 
 /** Options for the fake model's tool call and container-level extras. */
 export interface ScenarioOptions {
   /** Tool name the fake model emits on the first main completion. */
   emitToolCall?: string;
+  /** Code Mode code the fake model sends when `emitToolCall` is `execute`. */
+  emitToolCode?: string;
   /** Extra container environment variables. */
   env?: Record<string, string>;
 }
 
-/** Delay after a prompt before the capture buffer is read (pipe flush). */
+/** An MCP server a session must see registered before it prompts. */
+export interface McpExpectation {
+  /** Server name as it appears in `mcp.list`. */
+  name: string;
+  /** Expected connection status (defaults to `connected`). */
+  status?: string;
+}
+
+/**
+ * MCP servers each scenario mode registers; a session waits for them (by
+ * name and status) before prompting. `cli` phases override per call.
+ */
+const MODE_EXPECTATIONS: Record<string, McpExpectation[]> = {
+  hook: [{ name: 'echo' }],
+  static: [{ name: 'echo' }],
+  remote: [{ name: 'http' }, { name: 'redirect' }, { name: 'pathtool' }],
+  'negative-invalid': [{ name: 'echo' }],
+  'negative-stub': [{ name: 'echo', status: 'disabled' }],
+  'skill-collision': [{ name: 'echo' }],
+  'negative-mismatch': [],
+  'cli-missing': [],
+  cli: [],
+};
+
+/** Delay after a prompt completes before the capture buffer is read (flush). */
 const CAPTURE_FLUSH_MS = 500;
+
+/** How long to wait for plugin activation and MCP connections. */
+const READY_TIMEOUT_MS = 120_000;
+
+/**
+ * How long the expected MCP state must hold before a session prompts.
+ *
+ * A server's `connected` status (what `mcp.list` reports) is set BEFORE its
+ * tools reach the tool registry: OpenCode registers them through a debounced
+ * reconcile of the `mcp.tools.changed` event (100 ms in 2.0.16,
+ * `packages/core/src/tool/mcp.ts`). The Code Mode `execute` inventory is a
+ * snapshot of that registry, so a prompt sent inside the window cannot call
+ * the server's tools — the scenario fails with `Unknown tool
+ * '<server>.<tool>'` even though the server is connected and reports its
+ * tools. The registry has no read API, so the gate requires the expected
+ * state to hold for several times that debounce instead.
+ */
+const MCP_TOOL_REGISTRY_SETTLE_MS = 500;
 
 /** Runs `docker` and resolves; rejects loudly on CLI failure. */
 async function docker(args: string[]): Promise<void> {
   await execFileP('docker', args);
 }
 
+/** HTTP Basic authorization for the V2 server API (username `opencode`). */
+function authHeaders(): Record<string, string> {
+  const credentials = Buffer.from(`opencode:${SERVER_PASSWORD}`).toString('base64');
+  return { authorization: `Basic ${credentials}` };
+}
+
 /** A booted scenario container. */
 export class Scenario {
   private container: StartedTestContainer | null = null;
+  private client: ReturnType<typeof OpenCode.make> | null = null;
   private buffer = '';
   private logFollow: ChildProcess | null = null;
   private readonly image: string;
@@ -72,6 +124,9 @@ export class Scenario {
     const env: Record<string, string> = { ...BASE_ENV, ...(this.options.env ?? {}) };
     if (this.options.emitToolCall !== undefined) {
       env['EMIT_TOOL_CALL'] = this.options.emitToolCall;
+    }
+    if (this.options.emitToolCode !== undefined) {
+      env['EMIT_TOOL_CODE'] = this.options.emitToolCode;
     }
     // Wait on OUR readiness marker (the fake model's FAKE_SERVER_READY line):
     // the default `forListeningPorts` strategy would wait for 4096, which
@@ -107,7 +162,8 @@ export class Scenario {
 
   /**
    * Waits until opencode's HTTP listener answers (any status counts — the
-   * listener existing is what matters, not the log wording).
+   * listener existing is what matters, not the log wording; V2 answers 401
+   * without credentials, which still proves the listener is up).
    *
    * @param timeoutMs - Readiness timeout.
    * @returns The base URL once reachable.
@@ -137,22 +193,67 @@ export class Scenario {
   }
 
   /**
-   * Creates a session and drives one prompt to completion. Captures are
-   * parsed from the log lines produced by THIS session only — a scenario
-   * can drive several sessions (e.g. before/after a container restart), and
-   * earlier sessions' captures must not leak into the assertions.
+   * Creates a V2 session, drives one prompt to completion, and reads the
+   * session context once it is idle. Captures are parsed from the log lines
+   * produced by THIS session only — a scenario can drive several sessions
+   * (e.g. before/after a container restart), and earlier sessions' captures
+   * must not leak into the assertions.
    *
-   * @param prompt - Text of the prompt message.
-   * @returns The session run (prompt response + captures).
+   * @param promptText - Text of the prompt message.
+   * @param expectMcp - MCP servers the session must see registered before the
+   * prompt (defaults to the scenario mode's set; `cli` phases override).
+   * @returns The session run (messages + captures).
    */
-  async session(promptText = 'ping'): Promise<SessionRun> {
-    const baseUrl = await this.ready();
-    const sessionId = await this.createSession(baseUrl);
+  async session(
+    promptText = 'ping',
+    expectMcp: McpExpectation[] = MODE_EXPECTATIONS[this.mode] ?? [],
+  ): Promise<SessionRun> {
+    await this.ready();
+    const client = this.api();
+    // Creating the session loads the location (config + plugin activation);
+    // MCP servers then connect asynchronously, so wait before prompting.
+    const session = await client.session.create(
+      { location: { directory: '/app/workspace' } },
+      { signal: AbortSignal.timeout(90_000) },
+    );
+    await this.waitForReady(expectMcp);
     const offset = this.buffer.length;
-    const prompt = await this.promptSession(baseUrl, sessionId, promptText);
+    await client.session.prompt(
+      { sessionID: session.id, text: promptText },
+      { signal: AbortSignal.timeout(90_000) },
+    );
+    await client.session.wait({ sessionID: session.id }, { signal: AbortSignal.timeout(180_000) });
     await new Promise((resolveFlush) => setTimeout(resolveFlush, CAPTURE_FLUSH_MS));
     const output = this.buffer.slice(offset);
-    return { baseUrl, prompt, captures: capturesOf(output), output };
+    const messages = await client.session.context({ sessionID: session.id });
+    return { baseUrl: this.baseUrl, messages, captures: capturesOf(output), output };
+  }
+
+  /**
+   * The effective V2 config (`config.get`) — host-side registration evidence.
+   *
+   * @returns The config response.
+   */
+  async config(): Promise<unknown> {
+    return this.api().config.get();
+  }
+
+  /**
+   * MCP servers with their connection status (`mcp.list`).
+   *
+   * @returns The MCP list response.
+   */
+  async mcpList(): Promise<McpListOutput> {
+    return this.api().mcp.list();
+  }
+
+  /**
+   * Skills available at the workspace location (`skill.list`).
+   *
+   * @returns The skills list response.
+   */
+  async skillList(): Promise<SkillListOutput> {
+    return this.api().skill.list();
   }
 
   /**
@@ -205,6 +306,7 @@ export class Scenario {
     const id = this.requireContainer().getId();
     await docker(['stop', '-t', '20', id]);
     await docker(['start', id]);
+    this.client = null;
     this.reattachLogs(id);
   }
 
@@ -238,35 +340,67 @@ export class Scenario {
     return this.container;
   }
 
-  /** Creates a session via `POST /session` (query directory = workspace). */
-  private async createSession(baseUrl: string): Promise<string> {
-    // The first session of a cold container bootstraps opencode's config and
-    // plugin resolution, which can take ~10s locally and much longer on a
-    // busy/shared network — keep the budget generous, like promptSession's.
-    const response = await fetch(`${baseUrl}/session?directory=/app/workspace`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'e2e' }),
-      signal: AbortSignal.timeout(90_000),
-    });
-    expect(response.ok, `session create must succeed (${response.status})`).toBe(true);
-    const session = (await response.json()) as { id: string };
-    return session.id;
+  /** Lazily creates the authenticated V2 client for this container. */
+  private api(): ReturnType<typeof OpenCode.make> {
+    this.client ??= OpenCode.make({ baseUrl: this.baseUrl, headers: authHeaders() });
+    return this.client;
   }
 
-  /** Sends a prompt via `POST /session/{id}/message` (agent loop). */
-  private async promptSession(
-    baseUrl: string,
-    sessionId: string,
-    text: string,
-  ): Promise<SessionRun['prompt']> {
-    const response = await fetch(`${baseUrl}/session/${sessionId}/message`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parts: [{ type: 'text', text }] }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    expect(response.ok, `prompt must succeed (${response.status})`).toBe(true);
-    return (await response.json()) as SessionRun['prompt'];
+  /**
+   * Waits until the location is registered and usable: the loader plugin is
+   * active (all modes except `static`, which hand-writes the config) and the
+   * session's expected MCP servers are present with their status (and no
+   * server is still `pending`), and that state has held for
+   * {@link MCP_TOOL_REGISTRY_SETTLE_MS}. V2 activates plugins and connects
+   * servers asynchronously after the location loads, so a prompt sent too
+   * early would miss the registered tools and skills. With no expected
+   * servers the registry must be empty instead — never "ready" merely
+   * because a poll was empty. A timeout is non-fatal: the scenario
+   * assertions then report the actual state.
+   *
+   * @param expectMcp - Servers that must be present with their status.
+   */
+  private async waitForReady(expectMcp: McpExpectation[]): Promise<void> {
+    const client = this.api();
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    if (this.mode !== 'static') {
+      for (;;) {
+        const plugins = (await client.plugin.list()).data;
+        if (plugins.some((plugin) => plugin.id === PLUGIN_ID)) {
+          break;
+        }
+        if (Date.now() > deadline) {
+          return;
+        }
+        await new Promise((resolvePause) => setTimeout(resolvePause, 500));
+      }
+    }
+    let satisfiedSince: number | undefined;
+    for (;;) {
+      const servers = (await client.mcp.list()).data;
+      const pending = servers.some((server) => server.status.status === 'pending');
+      const satisfied =
+        expectMcp.length > 0
+          ? expectMcp.every((want) =>
+              servers.some(
+                (server) =>
+                  server.name === want.name &&
+                  server.status.status === (want.status ?? 'connected'),
+              ),
+            )
+          : servers.length === 0;
+      if (pending || !satisfied) {
+        satisfiedSince = undefined;
+      } else {
+        satisfiedSince ??= Date.now();
+        if (Date.now() - satisfiedSince >= MCP_TOOL_REGISTRY_SETTLE_MS) {
+          return;
+        }
+      }
+      if (Date.now() > deadline) {
+        return;
+      }
+      await new Promise((resolvePause) => setTimeout(resolvePause, 500));
+    }
   }
 }

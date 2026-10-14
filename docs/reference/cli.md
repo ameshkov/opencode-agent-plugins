@@ -34,12 +34,15 @@ npx opencode-agent-plugins <command> [args] [options]
 
 ## Config edits
 
-`install` and `remove` edit the `plugin` array of the resolved config. The
-edit is JSONC-preserving: comments and formatting outside the array stay
-intact. If both `opencode.json` and `opencode.jsonc` exist in the target
-scope, the `.jsonc` file wins and the CLI says so; if neither exists, it
-creates `opencode.json`. Writes are atomic and backed up under `backups/` in
-the client store.
+`install` and `remove` edit the `plugins` array of the resolved config — the
+`{ "package": "opencode-agent-plugins", "options": { … } }` entry. A legacy
+V1 `["opencode-agent-plugins", {…}]` tuple is read, migrated by `install`,
+and removed when its last source is removed. The edit is JSONC-preserving:
+comments and formatting outside the plugin arrays stay intact. If both
+`opencode.json` and `opencode.jsonc` exist in the target scope, the `.jsonc`
+file wins and the CLI says so; if neither exists, it creates
+`opencode.json`. Writes are atomic and backed up under `backups/` in the
+client store.
 
 ## Statuses
 

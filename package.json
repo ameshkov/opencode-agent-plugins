@@ -62,7 +62,8 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.30",
+    "@opencode/client": "2.0.16",
+    "@opencode/plugin": "2.0.16",
     "@types/node": "26.4.0",
     "husky": "9.1.7",
     "knip": "6.34.0",

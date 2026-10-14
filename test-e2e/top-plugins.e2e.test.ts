@@ -11,8 +11,8 @@
  *   runs the client's own validation pipeline and reports anything the client
  *   does not consume (nested SKILL.md, unknown manifest keys, extension
  *   namespaces, unsupported entry types, other component directories);
- * - the host-side registration (`GET /config`), connection status
- *   (`GET /mcp`), and skill discovery (`GET /skill`);
+ * - the host-side registration (`config.get`), connection status
+ *   (`mcp.list`), and skill discovery (`skill.list`);
  * - what actually reaches the provider (tool list + `<available_skills>` in
  *   the captured chat-completions request).
  *
@@ -29,6 +29,7 @@
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { McpListOutput, SkillListOutput } from '@opencode/client';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   mainRequestOf,
@@ -59,7 +60,7 @@ async function writeReport(): Promise<void> {
 /**
  * Skill names advertised in a captured request: the `<available_skills>`
  * block of the system prompt, or the `skill` tool description on releases
- * that carry it there (docs/explanation/design.md §9.1 finding 4).
+ * that carry it there (docs/explanation/design.md §3.3).
  *
  * @param request - A captured chat-completions request.
  * @returns The advertised skill names.
@@ -81,59 +82,36 @@ function skillNamesOf(request: ChatCompletionRequest): Set<string> {
 }
 
 /**
- * Fetches JSON from the opencode server API.
+ * MCP server names from a V2 `mcp.list` response (the plugin registry; V2
+ * transform registrations do not appear in the effective config).
  *
- * @param url - Absolute URL.
- * @returns The parsed body, or `{ status }` / `{ error }` on failure.
+ * @param response - The MCP list response.
+ * @returns The registered server names.
  */
-async function getJson(url: string): Promise<unknown> {
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) {
-      return { status: response.status };
-    }
-    return (await response.json()) as unknown;
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
+function mcpNamesOf(response: McpListOutput): string[] {
+  return response.data.map((server) => server.name);
 }
 
-/** MCP server names present in a `GET /config` response. */
-function mcpNamesOf(config: unknown): string[] {
-  if (config === null || typeof config !== 'object') {
-    return [];
-  }
-  const mcp = (config as { mcp?: unknown }).mcp;
-  if (mcp === null || typeof mcp !== 'object') {
-    return [];
-  }
-  return Object.keys(mcp);
+/**
+ * Skill names from a V2 `skill.list` response.
+ *
+ * @param response - The skills list response.
+ * @returns The skill names.
+ */
+function skillNamesFromEndpoint(response: SkillListOutput): string[] {
+  return response.data.map((entry) => String(entry.name));
 }
 
-/** Skill names from a `GET /skill` response. */
-function skillNamesFromEndpoint(response: unknown): string[] {
-  if (!Array.isArray(response)) {
-    return [];
-  }
-  return response
-    .map((entry) =>
-      entry !== null && typeof entry === 'object' ? (entry as { name?: unknown }).name : undefined,
-    )
-    .filter((name): name is string => typeof name === 'string');
-}
-
-/** Status strings from a `GET /mcp` response (`{}` when nothing is configured). */
-function mcpStatusesOf(response: unknown): Record<string, string> {
-  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
-    return {};
-  }
+/**
+ * Status strings from a V2 `mcp.list` response.
+ *
+ * @param response - The MCP list response.
+ * @returns Map of server name → status string.
+ */
+function mcpStatusesOf(response: McpListOutput): Record<string, string> {
   const statuses: Record<string, string> = {};
-  for (const [name, value] of Object.entries(response)) {
-    const status =
-      value !== null && typeof value === 'object'
-        ? (value as { status?: unknown }).status
-        : undefined;
-    statuses[name] = typeof status === 'string' ? status : 'unknown';
+  for (const server of response.data) {
+    statuses[server.name] = server.status.status;
   }
   return statuses;
 }
@@ -193,7 +171,10 @@ describe.runIf(RUN)('e2e top plugins: real Agent Plugins from the wild', () => {
               .toBe(plugin.expectedSkillCount);
 
             await scenario.markServe();
-            const run = await scenario.session('ping');
+            const run = await scenario.session(
+              'ping',
+              plugin.expectedMcp.map((name) => ({ name })),
+            );
             const main = mainRequestOf(run.captures);
             const tools = toolsOf(main.request);
             const providerSkills = skillNamesOf(main.request);
@@ -202,19 +183,23 @@ describe.runIf(RUN)('e2e top plugins: real Agent Plugins from the wild', () => {
             report.providerSkills = [...providerSkills].sort();
 
             // Host-side state: registered config, MCP status, discovered skills.
-            report.config = await getJson(`${run.baseUrl}/config`);
-            report.mcpEndpoint = await getJson(`${run.baseUrl}/mcp`);
-            report.skillEndpoint = skillNamesFromEndpoint(await getJson(`${run.baseUrl}/skill`));
+            report.config = await scenario.config();
+            const mcpList = await scenario.mcpList();
+            report.mcpEndpoint = mcpList;
+            report.skillEndpoint = skillNamesFromEndpoint(await scenario.skillList());
             report.registrationLogs = registrationLogsOf(scenario.output());
 
-            const configMcp = mcpNamesOf(report.config);
-            const statuses = mcpStatusesOf(report.mcpEndpoint);
+            const configMcp = mcpNamesOf(mcpList);
+            const statuses = mcpStatusesOf(mcpList);
             report.mcpDiscovery = {};
             for (const server of plugin.expectedMcp) {
               report.mcpDiscovery[server] = {
                 registered: configMcp.includes(server),
                 status: statuses[server] ?? 'absent',
-                discovered: providerTools.some((name) => name.startsWith(`${server}_`)),
+                // V2 wraps MCP tools in Code Mode by default, so the provider
+                // request does not list them directly; a connected server is
+                // the discovery evidence.
+                discovered: statuses[server] === 'connected',
               };
               expect.soft(configMcp, `server "${server}" must be registered`).toContain(server);
             }

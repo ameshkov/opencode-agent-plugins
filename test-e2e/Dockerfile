@@ -8,12 +8,13 @@
 #
 # Build (from the repo root):
 #   docker build -f test-e2e/Dockerfile \
-#     --build-arg OPENCODE_VERSION=1.18.30 -t opencode-agent-plugins-e2e:1.18.30 .
+#     --build-arg OPENCODE_VERSION=2.0.16 -t opencode-agent-plugins-e2e:2.0.16 .
 #
-# Run manually:
-#   docker run --rm -p 4096:4096 opencode-agent-plugins-e2e:1.18.30 hook
+# Run manually (the harness normally supplies E2E_SERVER_PASSWORD):
+#   docker run --rm -p 4096:4096 -e E2E_SERVER_PASSWORD=dev-only \
+#     opencode-agent-plugins-e2e:2.0.16 hook
 
-ARG OPENCODE_VERSION=1.18.30
+ARG OPENCODE_VERSION=2.0.16
 
 FROM node:26-bookworm-slim
 
@@ -38,22 +39,29 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # The release the plugin is verified against — matches the
-# @opencode-ai/plugin devDependency and the OPENCODE_VERSION CI env. The
+# @opencode/plugin devDependency and the OPENCODE_VERSION CI env. V2 ships as
+# `@opencode/cli` (the legacy `opencode-ai` package is the V1 line). The
 # OpenAI-compatible provider package used by the fake model endpoint is
 # preinstalled so opencode resolves it from the global root at runtime.
-RUN npm install --global --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}" \
+RUN npm install --global --no-fund --no-audit "@opencode/cli@${OPENCODE_VERSION}" \
   && npm install --global --no-fund --no-audit "@ai-sdk/openai-compatible@3.0.41"
 
 WORKDIR /app
 
 # The plugin, compiled from this repo (build/ output only; the build gate
-# already guarantees zero @opencode-ai runtime imports). Copied with its
+# already guarantees zero OpenCode runtime imports). Copied with its
 # package.json so the loader treats build/index.js as ESM, and its runtime
 # deps (zod, ajv, jsonc-parser) are installed — without them the plugin
-# import fails silently at load (§9.1.2).
+# import fails at load (OpenCode logs `failed to load plugin` and skips it,
+# §5.1).
 WORKDIR /app/plugin
 COPY build/ /app/plugin/build/
 COPY package.json /app/plugin/package.json
+# V2 resolves a configured plugin *directory* through `<dir>/server.js` (the
+# package-root ESM import fallback is rejected by Node for directories in
+# 2.0.16). A shim that re-exports the compiled entry makes the path form load;
+# npm-name entries resolve through package.json `main` instead.
+RUN printf "export { default } from './build/index.js';\n" > /app/plugin/server.js
 # No lockfile in the image (deps are pinned in package.json) and
 # --legacy-peer-deps: the full dev tree (vitest et al.) triggers a known npm
 # arborist crash ("Cannot read properties of null (reading 'edgesOut')")
@@ -63,28 +71,24 @@ RUN npm install --omit=dev --no-fund --no-audit --package-lock=false --legacy-pe
 
 # The same plugin as the npm package `opencode-agent-plugins` — the name the
 # CLI registers in the config (§5.11). Installed into the global npm root
-# (alongside opencode-ai) AND the workspace project dir, so opencode can
+# (alongside @opencode/cli) AND the workspace project dir, so opencode can
 # resolve the package-name plugin entry from either resolution base (an
-# unresolvable name is skipped silently at load, finding §9.1.2).
+# unresolvable name is reported at load and skipped, §5.1).
 RUN npm install --global --no-fund --no-audit --omit=dev --legacy-peer-deps /app/plugin
 RUN mkdir -p /app/workspace \
   && printf '{\n  "name": "e2e-workspace",\n  "private": true\n}\n' > /app/workspace/package.json \
   && cd /app/workspace \
   && npm install --no-save --no-fund --no-audit --omit=dev --legacy-peer-deps --package-lock=false /app/plugin
 
-# Seed opencode's managed plugin package cache: 1.18.x resolves npm-name
-# plugin entries through its own `Npm.add` (registry install into
-# <cache>/packages/<spec>). `opencode-agent-plugins` is not published
-# (registry 404), so we place the package (with its runtime deps) exactly
-# where opencode's short-circuit `existsSafe` check looks — under BOTH spec
-# spellings the loader may consult (`opencode-agent-plugins` and
-# `opencode-agent-plugins@latest`; the checked string depends on the
-# release).
+# Seed opencode's managed npm plugin cache: V2 resolves npm-name plugin
+# entries through its npm cache (`<cache>/npm/<name@spec>/<generation>/
+# node_modules/<name>`), and reuses the newest generation when the package
+# directory already exists. `opencode-agent-plugins` is published as a stale
+# V1 release, so we place THIS build (with its runtime deps) in a generation
+# directory to make the bare-name entry resolve locally.
 RUN set -eux; \
-  for spec in opencode-agent-plugins opencode-agent-plugins@latest; do \
-    mkdir -p "/app/opencode-home/.cache/opencode/packages/$spec/node_modules"; \
-    cp -R /app/plugin "/app/opencode-home/.cache/opencode/packages/$spec/node_modules/opencode-agent-plugins"; \
-  done
+  mkdir -p "/app/opencode-home/.cache/opencode/npm/opencode-agent-plugins@latest/1/node_modules"; \
+  cp -R /app/plugin "/app/opencode-home/.cache/opencode/npm/opencode-agent-plugins@latest/1/node_modules/opencode-agent-plugins"
 
 # Stdio fixture plugin: install its MCP SDK dependency, then copy the package
 # (exec bit for bin/serve.js is ensured explicitly).

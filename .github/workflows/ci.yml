@@ -24,9 +24,9 @@ concurrency:
 env:
   NODE_VERSION: '26'
   PNPM_VERSION: '10.14.0'
-  # The @opencode-ai/plugin devDependency is pinned to the opencode release
+  # The @opencode/plugin devDependency is pinned to the opencode release
   # the plugin is verified against. Matches package.json.
-  OPENCODE_VERSION: '1.18.30'
+  OPENCODE_VERSION: '2.0.16'
 
 jobs:
   ci:
@@ -69,7 +69,8 @@ jobs:
 
   # Containerized e2e suite: a real opencode (pinned via OPENCODE_VERSION)
   # runs inside a testcontainers-managed container with a fake model server;
-  # the test asserts the config-hook registration reaches the model request.
+  # the test asserts the plugin's transform registrations reach the model
+  # request.
   # Docker is available on the ubuntu runners by default.
   e2e:
     # The `env` context is not available in job names; the version under

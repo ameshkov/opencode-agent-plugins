@@ -24,16 +24,16 @@ contract and the code must be fixed.
 ```text
 opencode-agent-plugins/
 ├── src/
-│   ├── index.ts            # opencode plugin entry: (input, options) => Hooks
+│   ├── index.ts            # opencode V2 plugin entry: plain { id, setup } definition
 │   ├── options.ts          # Zod schema for the plugin options object
 │   ├── register.ts         # plugin pipeline: resolve → validate → register
-│   │                         (config-hook logic; talks to the opencode Config shape)
-│   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, config.mcp writes
-│   ├── register-skills.ts  # skills registration: collide-skip, config.skills.paths pushes
-│   ├── register-types.ts   # shared RuntimeConfig/RegisterState for the register-* modules
+│   │                         (V2 setup logic; talks to the plugin context domains)
+│   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, ctx.mcp.transform
+│   ├── register-skills.ts  # skills registration: collide-skip, ctx.skill.transform adds
+│   ├── register-types.ts   # shared RegistrationContext/RegisterState for the register-* modules
 │   ├── cli/                # opencode-agent-plugins binary: entry, flag parsing, prompts,
 │   │                         output, install/remove/update/inspect commands
-│   ├── lib/                # shared core — no @opencode-ai* runtime deps
+│   ├── lib/                # shared core — no @opencode/* runtime deps
 │   │                         (per docs/explanation/design.md §4.1); one module per concern:
 │   │   ├── resolve.ts      # source parsing (path | git URL [#fragment]) + store lookup
 │   │   ├── git.ts          # git availability, ls-remote, ref resolution
@@ -42,7 +42,9 @@ opencode-agent-plugins/
 │   │   ├── remove.ts       # remove operations (unregister + store/PLUGIN_DATA delete)
 │   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
 │   │   ├── update-status.ts # check/update status records + failure classification
-│   │   ├── config-file.ts  # JSONC-preserving edits of the opencode `plugin` array
+│   │   ├── config-file.ts  # config path resolution, safe writes, backups
+│   │   ├── config-edit.ts  # JSONC-preserving edits of the `plugins` entry (+ legacy tuple)
+│   │   ├── config-tree.ts  # jsonc-parser node accessors for the plugin arrays
 │   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
 │   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
 │   │   ├── mcp.ts          # mcp.json validation + translation to opencode config
@@ -56,10 +58,10 @@ opencode-agent-plugins/
 │   │   └── errors.ts       # failure taxonomy types + report-to-log mapping
 │   ├── schemas/            # vendored Agent Plugins schemas (committed, never fetched)
 │   └── utils/              # dependency-free helpers (logger, ...)
-├── scripts/                # build/dev gates: check-runtime-imports (no @opencode-ai
+├── scripts/                # build/dev gates: check-runtime-imports (no OpenCode
 │                             runtime imports), check-failure-kinds (§6 kinds),
 │                             update-schemas (dev-only schema sync)
-├── test/                   # shared test infrastructure (helpers, stub client)
+├── test/                   # shared test infrastructure (helpers, stub context)
 ├── test-e2e/               # Docker e2e suite: real opencode + testcontainers, one
 │                             scenario file per area (agent-plugins, remote-mcp,
 │                             cli-ops, cli-session, negative-behavior, plus the
@@ -78,18 +80,18 @@ The project has **two entry points**, each compiling independently and
 importing downward only:
 
 1. **Plugin entry** (`src/index.ts`) — loaded by opencode inside the host
-   process. Talks to opencode exclusively through the `config` hook and
-   imports `@opencode-ai/plugin` **type-only**.
+   process. Talks to opencode exclusively through the V2 `setup` context
+   transforms and imports `@opencode/plugin` **type-only**.
 2. **CLI entry** (`src/cli/index.ts`) — the `opencode-agent-plugins` binary
    run by the user. Runs on Node, outside opencode.
 
 Neither entry imports the other. `src/lib/` imports only `node:*`, Ajv, Zod,
-and `jsonc-parser` — never `@opencode-ai/*`, not even for types — so the CLI
+and `jsonc-parser` — never `@opencode/*`, not even for types — so the CLI
 installs and runs with no OpenCode dependency, and install-time validation is
 byte-identical to load-time validation. This dependency boundary
-(`src/lib/` → no `@opencode-ai/*`) is pinned by
+(`src/lib/` → no `@opencode/*`) is pinned by
 `scripts/check-runtime-imports.ts` in `pnpm build`, which fails the build on
-any leaked `@opencode-ai/*` value import in the compiled `build/`.
+any leaked OpenCode value import in the compiled `build/`.
 
 ```text
 Plugin entry (src/index.ts)
@@ -111,37 +113,51 @@ layers MUST NOT import from each other arbitrarily; shared logic lives in
 
 ## Plugin Surface
 
-This plugin talks to opencode exclusively through the `config` hook:
+This plugin talks to opencode exclusively through the V2 plugin context:
 
-- **Registering skills and MCP servers is a config-hook concern.** The
-  `config` hook receives opencode's live merged `Config` object and mutates
-  it in place: skills under `config.skills.paths`, MCP servers under
-  `config.mcp`.
+- **Registering skills and MCP servers is a `setup`/transform concern.**
+  `setup` registers through `ctx.skill.transform` (per-skill
+  `editor.add({ id, name, description, path, content })`) and
+  `ctx.mcp.transform` (`editor.set(name, { type, ... })`); V2 has no mutable
+  global config object. Transform callbacks are replayed during a batched
+  registry rebuild and may run after `transform()` resolves, so collision
+  checks and reports live inside the callback, never after the `await`.
 - **Never overwrite existing user configuration — user-authored config
-  always wins.** The hook runs after config resolution, so blind mutation
-  would clobber user intent (an `mcp: { "name": { "enabled": false } }` stub
-  or a user-defined server of the same name). Any pre-existing `config.mcp`
-  entry or `skills.paths` entry that collides with a plugin registration is
-  left untouched; the plugin's registration is skipped and reported. Skills
-  registration is directory-granular, so a colliding skill name skips the
-  plugin's whole `skills/` dir (user-config-wins,
-  `docs/explanation/design.md` §5.6).
+  always wins.** The MCP transform editor exposes config-defined servers, so a
+  colliding name is skipped and reported (warn for user config, error for an
+  earlier plugin in the same setup run). Config-discovered skills are not
+  visible to transforms; the host's skill registry keeps a config skill over a
+  plugin registration of the same name (`docs/explanation/design.md` §9.1.5).
+  Skills registration stays directory-granular on the client side, so a
+  detected collision skips the plugin's whole `skills/` dir (§5.6).
 - **No network access at startup.** Git URLs and installed plugin names
   resolve against the client store; sources that cannot be resolved without
   fetching are skipped with a warning. Startup stays fast and offline
   (installing/updating is the CLI's job).
 - **Failure isolation.** Every per-plugin failure is caught, mapped through
-  the failure taxonomy (`docs/explanation/design.md` §6), and logged; the hook
+  the failure taxonomy (`docs/explanation/design.md` §6), and logged; `setup`
   never throws. Only the narrowest unit is dropped — reject plugin → invalid
   component type → skip skill → invalid server entry → deny path.
-- **`config.skills` may be missing from the SDK type.** Normalize
-  (`config.skills ??= { paths: [] }`) through a local cast and treat the
-  runtime schema (`opencode.ai/config.json`) as authoritative.
-- **The plugin must not throw during load.** Keep the `config` hook
-  deterministic; if registration of a feature fails, degrade gracefully
-  rather than breaking opencode startup. A module-level error in the plugin
-  file makes opencode skip the plugin silently — the bundle must have no
-  top-level side effects that can throw.
+- **The plugin must not throw during load.** Keep `setup` deterministic; if
+  registration of a feature fails, degrade gracefully rather than breaking
+  opencode startup. V2 reports a broken module (`failed to load plugin`), but
+  the bundle must have no top-level side effects that can throw — all work
+  happens inside `setup`.
+- **Dependency boundary.** The entry imports `@opencode/plugin` **type-only**
+  and default-exports a plain `{ id, setup }` object (not `Plugin.define`) so
+  the compiled `build/` keeps zero runtime OpenCode imports.
+- **Double casts (`as unknown as`) are allowed only at these named sites.**
+  Effect brands the `Skill.Info` ids (`Skill.ID`, `Skill.Name`,
+  `AbsolutePath`), and constructing the brands at runtime would need a
+  forbidden `@opencode/*` value import, so `as unknown as Skill.Info`
+  (`src/register-skills.ts`, `test/stub-context.ts`) is sanctioned for
+  brand construction. The other sanctioned sites are the test doubles:
+  the editor/context facades in `test/stub-context.ts` and the
+  stub → `Context` cast in `src/index.test.ts` (they structurally
+  implement a subset of the branded SDK interfaces). The pre-existing
+  `clean as unknown as ManifestData` in `src/lib/manifest.ts` (the value
+  is already Ajv-validated at runtime) is grandfathered — do not
+  replicate it. No new `as unknown as` site without updating this list.
 
 ## Code Quality
 
@@ -237,11 +253,16 @@ Every module MUST have test coverage:
   asserting stale behavior, or written so it can never pass as-is (wrong
   endpoint, mismatched id, unreachable fixture), is a defect, not
   documentation: fix the case with the code.
+- **Real opencode tests run in Docker**: Any test that exercises a real
+  opencode binary MUST run inside a Docker container — never install or
+  run opencode on the host. The e2e suite in `test-e2e/` boots the
+  pinned release via Testcontainers; run it with `pnpm build` and
+  `pnpm test:e2e` (requires a working Docker engine).
 - **Prefer real behavior over mocks**: The plugin entry is exercised by
-  calling it and asserting on the `config` hook's effect on a `Config`
-  object, not by mocking opencode internals. The stub client in
-  `test/stub-client.ts` implements only `client.app.log` so log assertions
-  stay real.
+  calling `setup` with `stubContext()` and asserting on the recorded
+  registrations and log entries, not by mocking opencode internals. The
+  stub context in `test/stub-context.ts` records every skill/MCP
+  registration and log entry.
 
 **Rationale**: Co-locating tests with source keeps related files close,
 making it easier to find, update, and maintain them.
@@ -250,19 +271,19 @@ making it easier to find, update, and maintain them.
 
 - **Pin all dependency versions explicitly**: Do not use `^` or `~` in
   `package.json`.
-- **Type-only dependencies are devDependencies**: The OpenCode Plugin
-  package (`@opencode-ai/plugin`) is imported only for types (erased at
-  compile time), so it lives in `devDependencies`. The compiled plugin
-  output (`build/`) retains zero runtime `@opencode-ai/*` imports —
-  enforced by `scripts/check-runtime-imports.ts` in `pnpm build`, which
-  fails the build on any leaked value import (`import type { ... }` is the
-  only correct form).
+- **Type-only dependencies are devDependencies**: The OpenCode plugin type
+  package (`@opencode/plugin`) is imported only for types (erased at compile
+  time), so it lives in `devDependencies` (as does `@opencode/client`, used by
+  the e2e suite). The compiled plugin output (`build/`) retains zero runtime
+  `@opencode/*` imports — enforced by `scripts/check-runtime-imports.ts` in
+  `pnpm build`, which fails the build on any leaked value import (`import type
+  { ... }` is the only correct form).
 - **Keep the opencode version in sync.** The opencode release is pinned
-  in `package.json` (`@opencode-ai/plugin`) and the `OPENCODE_VERSION`
-  env in `.github/workflows/ci.yml`; the npm package and the binary MAY
-  differ by a patch but MUST stay on the same minor line — the plugin is
-  only verified against one opencode release at a time. After any bump,
-  run `pnpm typecheck` (API compatibility against the new SDK types),
+  in `package.json` (`@opencode/plugin` and `@opencode/client`) and the
+  `OPENCODE_VERSION` env in `.github/workflows/ci.yml`; the npm packages and
+  the binary MAY differ by a patch but MUST stay on the same minor line — the
+  plugin is only verified against one opencode release at a time. After any
+  bump, run `pnpm typecheck` (API compatibility against the new types),
   `pnpm test`, and the e2e suite before merging.
 
 External dependencies MUST be carefully evaluated before adoption:

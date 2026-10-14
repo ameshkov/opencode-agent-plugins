@@ -28,13 +28,13 @@ export type FailureKind =
   | 'path-escape' // package path escapes the plugin root
   | 'skills-missing' // skills/ absent: valid absence
   | 'skills-invalid' // invalid skill: skip that skill
-  | 'skills-collision' // skill name collides with an existing skills.paths entry
+  | 'skills-collision' // skill name collides with an existing skill
   | 'skills-nested' // SKILL.md deeper than skills/<name>/: warn
   | 'mcp-missing' // mcp.json absent: valid absence
   | 'mcp-invalid' // mcp.json invalid: disable MCP only
   | 'server-invalid' // invalid individual server entry: skip it
   | 'server-transport' // unsupported transport (sse): skip it
-  | 'server-collision' // name collision with existing config.mcp entry
+  | 'server-collision' // name collision with an existing MCP server entry
   | 'source-missing' // configured source not installed at startup
   | 'source-corrupt' // installed store entry corrupted / missing manifest
   | 'source-duplicate' // same source configured twice

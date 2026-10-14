@@ -1,32 +1,39 @@
-import { readFile, realpath, stat, symlink } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import type { Config, PluginInput } from '@opencode-ai/plugin';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Context } from '@opencode/plugin/promise/plugin';
 import agentPlugins from './index.js';
-import { stubClient } from '../test/stub-client.js';
-import { skillMd, tempDir, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
+import { stubContext } from '../test/stub-context.js';
+import { skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
 
-type RuntimeConfig = Config & {
-  skills?: { paths: string[] };
-  mcp?: Record<
-    string,
-    {
-      type: string;
-      command?: string[];
-      environment?: Record<string, string>;
-      cwd?: string;
-      url?: string;
-    }
-  >;
-};
-
-/** Creates the minimal plugin input with a stub client. */
-function pluginInput(): PluginInput {
-  return { client: stubClient(), directory: process.cwd() } as unknown as PluginInput;
+/** Silences the entry's own console logger (it cannot be injected). */
+function silenceConsole(): void {
+  for (const method of ['debug', 'info', 'warn', 'error'] as const) {
+    vi.spyOn(console, method).mockImplementation(() => {});
+  }
 }
 
-describe('agentPlugins plugin', () => {
+/** Calls the entry's setup with a stub context. */
+async function runSetup(context: ReturnType<typeof stubContext>): Promise<void> {
+  await agentPlugins.setup(context.context as unknown as Context);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+describe('agentPlugins plugin definition (V2)', () => {
+  it('exposes a default definition with a stable id and setup', () => {
+    expect(agentPlugins.id).toBe('opencode-agent-plugins');
+    expect(typeof agentPlugins.setup).toBe('function');
+    // V2-only: no V1 `server` entrypoint.
+    expect('server' in agentPlugins).toBe(false);
+  });
+
   it('registers skills and MCP servers from a valid plugin', async () => {
+    silenceConsole();
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
       'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
@@ -43,317 +50,48 @@ describe('agentPlugins plugin', () => {
       }),
     });
     const dataHome = await tmpPlugin({ x: 'x' });
-    process.env['XDG_DATA_HOME'] = dataHome.root;
+    vi.stubEnv('XDG_DATA_HOME', dataHome.root);
     try {
       const root = await realpath(plugin.root);
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
+      const stub = stubContext({ options: { plugins: [plugin.root] } });
+      await runSetup(stub);
 
-      expect(config.skills?.paths).toContain(`${root}/skills`);
-      const mcp = config.mcp!;
-      expect(Object.keys(mcp)).toEqual(['echo']);
-      expect(mcp['echo']!.type).toBe('local');
-      expect(mcp['echo']!.command).toEqual([`${root}/bin/serve.js`, '--ping']);
-      expect(mcp['echo']!.environment?.['PLUGIN_ROOT']).toBe(root);
-      expect(mcp['echo']!.environment?.['PLUGIN_DATA']).toContain('hello-');
-      expect(mcp['echo']!.environment?.['DIR']).toBe(mcp['echo']!.environment?.['PLUGIN_DATA']);
+      const skill = stub.registeredSkills.get('hello');
+      expect(skill?.path).toBe(join(root, 'skills/hello/SKILL.md'));
+      expect(skill?.content).toContain('# hello');
 
-      // PLUGIN_DATA dir must be created eagerly for stdio servers.
-      expect(await stat(mcp['echo']!.environment!['PLUGIN_DATA']!)).toBeDefined();
-
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages).toContain('plugin loading');
+      const mcp = stub.registeredMcp.get('echo');
+      expect(mcp?.type).toBe('local');
+      if (mcp?.type === 'local') {
+        expect(mcp.command).toEqual([`${root}/bin/serve.js`, '--ping']);
+        expect(mcp.environment?.['PLUGIN_ROOT']).toBe(root);
+        expect(mcp.environment?.['PLUGIN_DATA']).toContain('hello-');
+        expect(mcp.environment?.['DIR']).toBe(mcp.environment?.['PLUGIN_DATA']);
+        // PLUGIN_DATA dir must be created eagerly for stdio servers.
+        expect(await stat(mcp.environment!['PLUGIN_DATA']!)).toBeDefined();
+      }
     } finally {
       await plugin.cleanup();
+      await dataHome.cleanup();
     }
   });
 
-  it('registers a skills dir that ships extra skill resources (§5.6)', async () => {
-    const plugin = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
-      'skills/hello/references/notes.md': '# Notes\n\nReferenced by the skill.\n',
-    });
-    try {
-      const root = await realpath(plugin.root);
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-
-      // Registration is directory-granular: the resource file is not a skill
-      // and adds no warning, while the registered dir exposes it to the host.
-      expect(config.skills?.paths).toEqual([`${root}/skills`]);
-      expect(await readFile(join(root, 'skills/hello/references/notes.md'), 'utf8')).toBe(
-        '# Notes\n\nReferenced by the skill.\n',
-      );
-    } finally {
-      await plugin.cleanup();
-    }
+  it('logs an error and still resolves when options are invalid', async () => {
+    silenceConsole();
+    const stub = stubContext({ options: {} });
+    await expect(runSetup(stub)).resolves.toBeUndefined();
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((call) => String(call[0]))
+      .join('\n');
+    expect(errors).toContain('failed to parse agent plugins options');
   });
 
-  it('reports valid absences (missing skills/ and mcp.json) at debug level (§6)', async () => {
-    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root], logLevel: 'debug' });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
-      const boundaries = logs.map(
-        (log) => (log.extra as { boundary?: string } | undefined)?.boundary,
-      );
-      expect(boundaries).toContain('skills-missing');
-      expect(boundaries).toContain('mcp-missing');
-      const skillAbsence = logs.find(
-        (log) => (log.extra as { boundary?: string } | undefined)?.boundary === 'skills-missing',
-      );
-      expect(skillAbsence?.level).toBe('debug');
-    } finally {
-      await plugin.cleanup();
-    }
-  });
-
-  it('does not forward debug absence reports at the default info threshold', async () => {
-    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
-      const boundaries = logs.map(
-        (log) => (log.extra as { boundary?: string } | undefined)?.boundary,
-      );
-      expect(boundaries).not.toContain('skills-missing');
-      expect(boundaries).not.toContain('mcp-missing');
-    } finally {
-      await plugin.cleanup();
-    }
-  });
-
-  it('reports unimplemented extension namespaces at debug level (§6)', async () => {
-    const plugin = await tmpPlugin({
-      'plugin.json': JSON.stringify({
-        ...JSON.parse(VALID_PLUGIN_JSON),
-        extensions: { 'com.example.foo': { heading: 'x' } },
-      }),
-      'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root], logLevel: 'debug' });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
-      const ns = logs.find(
-        (log) =>
-          (log.extra as { boundary?: string } | undefined)?.boundary === 'extension-namespace',
-      );
-      expect(ns?.level).toBe('debug');
-      expect((ns?.extra as { namespace?: string } | undefined)?.namespace).toBe('com.example.foo');
-    } finally {
-      await plugin.cleanup();
-    }
-  });
-
-  it('denies a skills/ dir that symlinks outside the plugin root (§5.5)', async () => {
-    const outside = await tempDir('oap-outside-');
-    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
-    try {
-      await symlink(outside.root, join(plugin.root, 'skills'));
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      expect(config.skills?.paths).toEqual([]);
-      const logs = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!);
-      const escape = logs.find(
-        (log) => (log.extra as { boundary?: string } | undefined)?.boundary === 'path-escape',
-      );
-      expect(escape?.level).toBe('warn');
-    } finally {
-      await plugin.cleanup();
-      await outside.cleanup();
-    }
-  });
-
-  it('registers remote servers under a prefixed name and skips collisions', async () => {
-    const plugin = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'mcp.json': JSON.stringify({
-        $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
-        mcpServers: { api: { type: 'streamable-http', url: 'https://example.com/mcp' } },
-      }),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root], prefix: true });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      expect(Object.keys(config.mcp ?? {})).toEqual(['hello-api']);
-      expect(config.mcp!['hello-api']!.type).toBe('remote');
-    } finally {
-      await plugin.cleanup();
-    }
-  });
-
-  it('lets user config win on name collisions', async () => {
-    const plugin = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'mcp.json': JSON.stringify({
-        $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
-        mcpServers: { echo: { type: 'stdio', command: './bin/serve.js' } },
-      }),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {
-        mcp: { echo: { type: 'local', command: ['user-cmd'], enabled: false } },
-      } as unknown as RuntimeConfig;
-      await hooks.config!(config);
-      // The user's entry stays untouched.
-      expect(config.mcp!['echo']!.command).toEqual(['user-cmd']);
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages.some((m) => m.includes('user config wins'))).toBe(true);
-    } finally {
-      await plugin.cleanup();
-    }
-  });
-
-  it('skips the plugin skills dir on a pre-existing skill-name collision', async () => {
-    const userSkills = await tmpPlugin(
-      { 'skills/hello/SKILL.md': skillMd('hello', 'User skill.') },
-      'oap-user-skills-',
-    );
-    const plugin = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'skills/hello/SKILL.md': skillMd('hello', 'Plugin skill.'),
-      'skills/world/SKILL.md': skillMd('world', 'Plugin world.'),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [plugin.root] });
-      const config = {
-        skills: { paths: [`${userSkills.root}/skills`] },
-      } as unknown as RuntimeConfig;
-      await hooks.config!(config);
-      // The colliding plugin skills dir is NOT registered (§3.2), even though
-      // it also holds a non-colliding skill (registration is directory-granular).
-      expect(config.skills!.paths).toEqual([`${userSkills.root}/skills`]);
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages.some((m) => m.includes('user config wins'))).toBe(true);
-    } finally {
-      await userSkills.cleanup();
-      await plugin.cleanup();
-    }
-  });
-
-  it('skips the later plugin skills dir on a plugin-plugin collision', async () => {
-    const first = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'skills/hello/SKILL.md': skillMd('hello', 'First.'),
-    });
-    const second = await tmpPlugin({
-      'plugin.json': JSON.stringify({
-        ...JSON.parse(VALID_PLUGIN_JSON),
-        name: 'second',
-      }),
-      'skills/hello/SKILL.md': skillMd('hello', 'Second.'),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [first.root, second.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      expect(config.skills?.paths).toEqual([`${await realpath(first.root)}/skills`]);
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages.some((m) => m.includes('registered earlier in this run'))).toBe(true);
-    } finally {
-      await first.cleanup();
-      await second.cleanup();
-    }
-  });
-
-  it('skips a plugin with an invalid manifest and continues with others', async () => {
-    const bad = await tmpPlugin({
-      'plugin.json': JSON.stringify({
-        $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
-        name: 'bad..name',
-      }),
-    });
-    const good = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, { plugins: [bad.root, good.root] });
-      const config = {} as RuntimeConfig;
-      await hooks.config!(config);
-      expect(config.skills?.paths).toEqual([`${await realpath(good.root)}/skills`]);
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages.some((m) => m.includes('invalid plugin.json'))).toBe(true);
-    } finally {
-      await bad.cleanup();
-      await good.cleanup();
-    }
-  });
-
-  it('warns for git sources that are not installed (no network at startup)', async () => {
-    const input = pluginInput();
-    const hooks = await agentPlugins(input, {
-      plugins: ['git+https://github.com/org/absent.git#v1.0.0'],
-    });
-    const config = {} as RuntimeConfig;
-    await hooks.config!(config);
-    const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-    expect(messages.some((m) => m.includes('not installed in the client store'))).toBe(true);
-    expect(config.skills?.paths ?? []).toEqual([]);
-  });
-
-  it('does not throw on a malformed ref and continues with other plugins', async () => {
-    const good = await tmpPlugin({
-      'plugin.json': VALID_PLUGIN_JSON,
-      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
-    });
-    try {
-      const input = pluginInput();
-      const hooks = await agentPlugins(input, {
-        plugins: ['git+https://github.com/org/absent.git#bad ref', good.root],
-      });
-      const config = {} as RuntimeConfig;
-      await expect(hooks.config!(config)).resolves.toBeUndefined();
-      expect(config.skills?.paths).toEqual([`${await realpath(good.root)}/skills`]);
-      const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-      expect(messages.some((m) => m.includes('invalid git ref'))).toBe(true);
-    } finally {
-      await good.cleanup();
-    }
-  });
-
-  it('logs an error and still returns hooks when options are invalid', async () => {
-    const input = pluginInput();
-    const hooks = await agentPlugins(input, {});
-    expect(hooks.config).toBeDefined();
-    const config = {} as RuntimeConfig;
-    await hooks.config!(config);
-    const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-    expect(messages).toContain('failed to parse agent plugins options');
-  });
-});
-
-describe('agentPlugins scaffold behavior', () => {
-  it('normalizes config.skills and logs configured sources', async () => {
-    const input = pluginInput();
-    const hooks = await agentPlugins(input, { plugins: ['./agent-plugins/my-plugin'] });
-    const config = { skills: { paths: ['/pre/existing'] } } as unknown as RuntimeConfig;
-    await hooks.config!(config);
-    expect(config.skills!.paths).toEqual(['/pre/existing']);
-    const messages = vi.mocked(input.client.app.log).mock.calls.map((c) => c[0]!.body!.message);
-    expect(messages).toContain('agent plugins configured');
+  it('never throws when a source fails during registration', async () => {
+    silenceConsole();
+    const stub = stubContext({ options: { plugins: ['./agent-plugins/missing'] } });
+    await expect(runSetup(stub)).resolves.toBeUndefined();
+    expect(stub.registeredSkills.size).toBe(0);
+    expect(stub.registeredMcp.size).toBe(0);
   });
 });

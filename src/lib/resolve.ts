@@ -235,7 +235,7 @@ function baseSlugOf(url: string): string {
  * - git URL: looked up in the client store by slug; missing → warn+skip
  *   failure, corrupted meta → error.
  * - malformed ref (`#ref` with whitespace, empty ref): reported as a
- *   failure, never thrown — the config hook must not throw (§5.1).
+ *   failure, never thrown — the plugin setup must not throw (§5.1).
  *
  * @param raw - Source string.
  * @param workspaceDir - Workspace directory for relative paths.

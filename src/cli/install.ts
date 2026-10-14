@@ -5,15 +5,19 @@
 import { rm } from 'node:fs/promises';
 import { applyInstall, prepareInstall } from '../lib/install.js';
 import type { InstallPlan, OpResult } from '../lib/install.js';
-import { probeConfig } from '../lib/config-file.js';
+import { probeConfig } from '../lib/config-edit.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { printConfigNote } from './output.js';
 import { confirm } from './prompts.js';
 
 /** Warning printed when the config has no `opencode-agent-plugins` entry. */
-const TUPLE_WARNING =
+const ENTRY_WARNING =
   'warn:    your opencode config has no "opencode-agent-plugins" plugin entry; ' +
   'OpenCode will not load it for the registered source';
+
+/** Note printed when the loader entry is still the legacy V1 tuple form. */
+const LEGACY_NOTE =
+  'note:    your config uses the legacy V1 "plugin" tuple; it will be migrated to the V2 "plugins" entry';
 
 /**
  * Runs `install <source> [--ref <ref>] [--global|--config <path>] [--yes]
@@ -94,17 +98,18 @@ function printInstallResult(
   printConfigNote(result);
   if (boolFlag(args.flags, '--no-register')) {
     console.log(
-      `\nAdd this to your opencode config's "plugin" array:\n` +
-        `  ["opencode-agent-plugins", { "plugins": ["${plan.raw}"] }]`,
+      `\nAdd this to your opencode config's "plugins" array:\n` +
+        `  { "package": "opencode-agent-plugins", "options": { "plugins": ["${plan.raw}"] } }`,
     );
   }
 }
 
 /**
  * Ensures the opencode config that `install` will edit contains the
- * `["opencode-agent-plugins", {…}]` loader tuple.
+ * `{ package: "opencode-agent-plugins", … }` loader entry (or the legacy V1
+ * tuple, which the write migrates).
  *
- * When the tuple is missing, any source registered on its own is inert —
+ * When the entry is missing, any source registered on its own is inert —
  * OpenCode never loads the loader plugin, so the config edit would be
  * useless and `doctor` would report the source as unreferenced. The CLI
  * therefore warns and, in interactive mode, asks the user to add the entry
@@ -112,15 +117,18 @@ function printInstallResult(
  * declining aborts the install with nothing written.
  *
  * @param args - Parsed command line (for the config scope and `--yes`).
- * @returns `true` when registering may proceed (tuple present or the user
+ * @returns `true` when registering may proceed (entry present or the user
  * accepted adding it).
  */
 async function ensureLoaderEntry(args: ParsedArgs): Promise<boolean> {
   const probe = await probeConfig(scopeOf(args));
-  if (probe.hasTuple) {
+  if (probe.hasEntry) {
+    if (probe.legacyTuple) {
+      console.error(LEGACY_NOTE);
+    }
     return true;
   }
-  console.error(TUPLE_WARNING);
+  console.error(ENTRY_WARNING);
   console.error(`config:   ${probe.path}`);
   if (boolFlag(args.flags, '--yes')) {
     return true;

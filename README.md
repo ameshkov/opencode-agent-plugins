@@ -15,9 +15,10 @@ capabilities: a directory with a `plugin.json` manifest, optionally a
 
 `opencode-agent-plugins` has two parts:
 
-- **An OpenCode plugin** that runs at OpenCode startup: it resolves each
+- **An OpenCode V2 plugin** that runs at OpenCode startup: it resolves each
   configured source, validates the package against the specification, and
-  registers its skills and MCP servers into OpenCode's live config. `stdio`
+  registers its skills and MCP servers through OpenCode's plugin context
+  (skills as individual definitions, MCP servers as native entries). `stdio`
   MCP servers receive `PLUGIN_ROOT` and a persistent `PLUGIN_DATA` directory;
   `streamable-http` servers become remote entries; unsupported `sse` servers
   are skipped with a warning.
@@ -28,7 +29,8 @@ capabilities: a directory with a `plugin.json` manifest, optionally a
 
 ### Prerequisites
 
-- [OpenCode](https://opencode.ai) installed.
+- [OpenCode 2](https://opencode.ai) installed (the plugin is verified against
+  `2.0.16`).
 - Node.js >= 26 (for the CLI).
 - `git` on the `PATH` for the git-backed commands (`install` from a URL,
   `check`, `update`) and for `list`'s status column. `remove`, `doctor`,
@@ -61,13 +63,17 @@ the source in your OpenCode config, adding the `opencode-agent-plugins`
 loader entry first if the config has none (declining aborts the install;
 `--yes` auto-adds it without prompting).
 
-### Restart OpenCode
+### Reload OpenCode
 
-Registrations are applied at startup. After restarting, plugin skills appear
-in the available skills list and MCP tools are available as
-`<server-name>_*` tools (gate them with `tools: { "server-name_*": false }`
-or per-agent overrides as usual). Diagnostics are logged via
-`client.app.log` with `service: "opencode-agent-plugins"`.
+OpenCode watches its configuration and reloads the loader plugin, so a new
+session picks up registrations without a restart; restarting remains the
+deterministic path. Plugin skills appear in the available skills list. MCP
+tools are wrapped in Code Mode by default, like natively-configured servers:
+call them as `tools.<server>.<tool>` inside the `execute` tool, or pre-define
+the server with `codemode: false` to expose them on the provider's native tool
+list. Gate tools with permission rules on `<server>_*`. Diagnostics are
+printed as `[opencode-agent-plugins]` console lines (visible in
+`opencode serve --print-logs`).
 
 ## Managing plugins
 
@@ -89,8 +95,9 @@ npx opencode-agent-plugins update
 
 `update` stages each new revision, validates it, swaps it into the store
 atomically, and leaves `PLUGIN_DATA` untouched. Add `--dry-run` to print the
-plan without writing anything, or `--force` to follow a moved tag. Restart
-OpenCode to pick up the change.
+plan without writing anything, or `--force` to follow a moved tag. OpenCode's
+config watcher reloads the plugin on its own; restarting is the deterministic
+way to pick up the change.
 
 Other commands:
 

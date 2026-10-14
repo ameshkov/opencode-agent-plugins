@@ -2,25 +2,30 @@
 
 ## Plugin entry
 
-OpenCode loads Agent Plugins through one `opencode-agent-plugins` entry in
-the `plugin` array of its config — the project `opencode.json`, or
+OpenCode V2 loads Agent Plugins through one `opencode-agent-plugins` entry in
+the `plugins` array of its config — the project `opencode.json`, or
 `~/.config/opencode/opencode.json` when registered globally:
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    ["opencode-agent-plugins", {
-      "plugins": ["./agent-plugins/my-plugin"]
-    }]
+  "plugins": [
+    {
+      "package": "opencode-agent-plugins",
+      "options": {
+        "plugins": ["./agent-plugins/my-plugin"]
+      }
+    }
   ]
 }
 ```
 
-Use a single entry with an array of sources. OpenCode loads duplicate npm
-packages only once, so a second `opencode-agent-plugins` entry is silently
-ignored. The `install` command registers sources in this entry and can add
-the entry itself when the config has none.
+Use a single entry with an array of sources. OpenCode deduplicates plugin
+entries by package identity, so a second `opencode-agent-plugins` entry is
+silently ignored. The `install` command registers sources in this entry and
+can add the entry itself when the config has none; a legacy V1
+`["opencode-agent-plugins", {…}]` tuple is migrated to this object form by
+the next `install` write.
 
 ## Options
 
@@ -28,7 +33,7 @@ the entry itself when the config has none.
 | --- | --- | --- | --- |
 | `plugins` | `string \| string[]` | — | Plugin source(s): local path, git URL, or an installed plugin name. Required. |
 | `prefix` | `boolean` | `false` | Namespace MCP server names as `<plugin-name>-<server>` to avoid cross-plugin collisions. Applies to all sources in this entry. |
-| `logLevel` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | Minimum level forwarded to `client.app.log`. |
+| `logLevel` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | Minimum level written to the plugin's console logger. |
 
 Unknown option keys produce a warning and are ignored.
 
@@ -38,7 +43,7 @@ Each entry in `plugins` is one of:
 
 - **Local path** — absolute, `~/...`, or relative to the workspace directory.
   Used in place and never copied into the store, so edits to the directory
-  are picked up on the next OpenCode start. Install one with
+  are picked up on the next OpenCode location load. Install one with
   `npx opencode-agent-plugins install ./agent-plugins/my-plugin`.
 - **Git URL** — `https://...`, `git+https://...`, `ssh://...`,
   `git+ssh://...`, or the scp-like `git@host:path` form, with an optional

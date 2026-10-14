@@ -12,13 +12,13 @@ import { join, resolve } from 'node:path';
 import { gitAvailable, resolveRemoteCommit } from './git.js';
 import { resolveStagedRoot, stageTree } from './clone.js';
 import {
-  applyRegisterSource,
   configError,
   configPreferenceNote,
   resolveConfigFile,
   saveConfig,
   type ConfigScope,
 } from './config-file.js';
+import { applyRegisterSource } from './config-edit.js';
 import { dataDirForKey, storeDir } from './data.js';
 import { installedRootFor, readMeta, removeMeta, writeMeta, type StoreMeta } from './store.js';
 import { parseSource, type GitSource } from './resolve.js';

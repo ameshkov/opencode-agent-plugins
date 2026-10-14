@@ -1,7 +1,7 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { discoverSkills, isValidSkillName, SKILL_NAME_RE } from './skills.js';
+import { discoverSkills, isTopLevelSkillMd, isValidSkillName, SKILL_NAME_RE } from './skills.js';
 import { skillMd, tempDir, tmpPlugin, VALID_PLUGIN_JSON } from '../../test/helpers.js';
 
 describe('isValidSkillName', () => {
@@ -26,6 +26,19 @@ describe('isValidSkillName', () => {
   });
 });
 
+describe('isTopLevelSkillMd', () => {
+  it('accepts immediate-child SKILL.md paths on both separators', () => {
+    expect(isTopLevelSkillMd('hello/SKILL.md')).toBe(true);
+    expect(isTopLevelSkillMd('hello\\SKILL.md')).toBe(true);
+  });
+
+  it('rejects deeper and shallower paths', () => {
+    expect(isTopLevelSkillMd('hello/references/SKILL.md')).toBe(false);
+    expect(isTopLevelSkillMd('hello\\references\\SKILL.md')).toBe(false);
+    expect(isTopLevelSkillMd('SKILL.md')).toBe(false);
+  });
+});
+
 describe('discoverSkills', () => {
   it('treats a missing skills/ dir as valid absence', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
@@ -33,7 +46,6 @@ describe('discoverSkills', () => {
       const result = await discoverSkills(plugin.root);
       expect(result.missing).toBe(true);
       expect(result.skills).toEqual([]);
-      expect(result.root).toBeNull();
     } finally {
       await plugin.cleanup();
     }
@@ -48,7 +60,6 @@ describe('discoverSkills', () => {
     try {
       const result = await discoverSkills(plugin.root);
       expect(result.skills.map((s) => s.name)).toEqual(['hello']);
-      expect(result.root).toContain('/skills');
     } finally {
       await plugin.cleanup();
     }
@@ -63,7 +74,6 @@ describe('discoverSkills', () => {
     try {
       const result = await discoverSkills(plugin.root);
       expect(result.skills).toEqual([]);
-      expect(result.root).toBeNull();
       expect(result.failures.map((f) => f.kind)).toEqual(['skills-invalid', 'skills-invalid']);
     } finally {
       await plugin.cleanup();
@@ -99,7 +109,6 @@ describe('discoverSkills', () => {
       const result = await discoverSkills(plugin.root);
       expect(result.skills.map((s) => s.name)).toEqual(['hello']);
       expect(result.failures).toEqual([]);
-      expect(result.root).toContain('/skills');
     } finally {
       await plugin.cleanup();
     }
@@ -128,7 +137,6 @@ describe('discoverSkills', () => {
       expect(result.failures.map((f) => f.kind)).toEqual(['path-escape']);
       expect(result.failures[0]?.extra).toMatchObject({ section: '§5.5' });
       expect(result.skills).toEqual([]);
-      expect(result.root).toBeNull();
     } finally {
       await plugin.cleanup();
       await outside.cleanup();
@@ -165,7 +173,6 @@ describe('discoverSkills', () => {
         expect(result.failures[0].extra).toMatchObject({ skill: 'evil', section: '§5.5' });
       }
       expect(result.skills).toEqual([]);
-      expect(result.root).toBeNull();
     } finally {
       await plugin.cleanup();
       await outside.cleanup();

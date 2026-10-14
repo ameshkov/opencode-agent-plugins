@@ -13,7 +13,8 @@ import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveRemoteRef } from './git.js';
 import { resolveStagedRoot, stageTree } from './clone.js';
-import { configSourcesOf, resolveConfigFile, type ConfigScope } from './config-file.js';
+import { configSourcesOf } from './config-edit.js';
+import { resolveConfigFile, type ConfigScope } from './config-file.js';
 import { dataDirForKey } from './data.js';
 import {
   installedRootFor,

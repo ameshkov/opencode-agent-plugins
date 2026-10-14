@@ -31,23 +31,25 @@ const MCP_SCHEMA_1_0_0 = 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.jso
 /** Canonical schema identifiers this client implements (§5.9). */
 const SUPPORTED_MCP_SCHEMAS: ReadonlySet<string> = new Set([MCP_SCHEMA_1_0_0]);
 
-/** Opencode-native config for a translated stdio server. */
-interface LocalMcpConfig {
-  type: 'local';
-  command: string[];
-  environment?: Record<string, string>;
-  cwd?: string;
-}
-
-/** Opencode-native config for a translated remote server. */
-interface RemoteMcpConfig {
-  type: 'remote';
-  url: string;
-  headers?: Record<string, string>;
-}
-
-/** OpenCode-native MCP config (runtime superset of the SDK type). */
-type McpConfigLike = LocalMcpConfig | RemoteMcpConfig;
+/**
+ * OpenCode-native MCP config produced by the translation — the V2
+ * `Mcp.ServerConfig` subset this client emits (`disabled` stays absent, so
+ * the server is enabled).
+ */
+export type McpConfigLike =
+  | {
+      type: 'local';
+      command: string[];
+      environment?: Record<string, string>;
+      cwd?: string;
+      disabled?: boolean;
+    }
+  | {
+      type: 'remote';
+      url: string;
+      headers?: Record<string, string>;
+      disabled?: boolean;
+    };
 
 /** A validated/translated server entry. */
 export interface McpServerSpec {
@@ -264,7 +266,7 @@ function translateStdio(
   const env = expandedEnvOf(entry, root, dataDir);
   env['PLUGIN_ROOT'] = root;
   env['PLUGIN_DATA'] = dataDir;
-  const config: LocalMcpConfig = {
+  const config: Extract<McpConfigLike, { type: 'local' }> = {
     type: 'local',
     command: [resolved.path, ...expandedArgsOf(entry, root, dataDir)],
     environment: env,
@@ -294,7 +296,7 @@ function translateRemote(
       problem: { kind: 'invalid', message: headerProblem },
     };
   }
-  const config: RemoteMcpConfig = { type: 'remote', url };
+  const config: Extract<McpConfigLike, { type: 'remote' }> = { type: 'remote', url };
   if (Object.keys(rawHeaders).length > 0) {
     config.headers = rawHeaders;
   }

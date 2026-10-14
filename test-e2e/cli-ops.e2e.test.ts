@@ -5,7 +5,7 @@
  * store/config filesystem (docs/explanation/design.md §5.12 — staging, validation,
  * atomic swap, doctor/prune, ref semantics).
  *
- * The container boots with the `opencode-agent-plugins` config tuple
+ * The container boots with the `opencode-agent-plugins` config entry
  * registered (empty `plugins` array, the form the CLI edits) and a git
  * fixture remote at `file:///app/git-fixtures/remote.git` (v1.0.0, tag
  * `v1.0.0`). The tests mutate the fixture via `git-fixture.mjs` (push new
@@ -54,7 +54,7 @@ async function cliFail(scenario: Scenario, args: string[], code: number): Promis
   return result.output;
 }
 
-/** Asserts the config's plugin array still references only the given text. */
+/** Reads the scenario's opencode config (asserted as raw text). */
 async function configOf(scenario: Scenario): Promise<string> {
   return scenario.readFile('/app/workspace/opencode.json');
 }
@@ -73,7 +73,7 @@ describe(`e2e cli ops: real filesystem, opencode ${OPENCODE_VERSION}`, () => {
 
         const after = await configOf(scenario);
         // The original source string is registered (never store-internal
-        // paths, §5.11); the tuple is the npm package form (§5.11).
+        // paths, §5.11); the entry is the npm package form (§5.11).
         expect(after).toContain(CLI);
         expect(after).toContain('opencode-agent-plugins');
 

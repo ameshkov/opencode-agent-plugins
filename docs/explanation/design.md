@@ -9,13 +9,13 @@
 
 ## 1. Goal
 
-Build an Opencode plugin, configured as
+Build an Opencode V2 plugin, configured as
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    ["opencode-agent-plugins", { "plugins": "<path-to-plugin>" }]
+  "plugins": [
+    { "package": "opencode-agent-plugins", "options": { "plugins": "<path-to-plugin>" } }
   ]
 }
 ```
@@ -25,12 +25,13 @@ package (a directory containing `plugin.json`, optionally `skills/` and `mcp.jso
 validates it against the Agent Plugins specification, and registers its components
 into Opencode:
 
-- **Skills** → registered via `config.skills.paths` (Opencode scans each path for
-  `SKILL.md` files — scan depth verified per release, see §5.6), so plugin skills
-  appear in the `skill` tool with no file copies.
-- **MCP servers** → translated from the portable `mcp.json` format into Opencode's
-  native `config.mcp` entries (a `stdio` server becomes `type: "local"`, a remote
-  server becomes `type: "remote"`).
+- **Skills** → registered as individual V2 skill definitions through
+  `ctx.skill.transform` (id, name, description, absolute `SKILL.md` path,
+  content), so plugin skills appear in the available-skills surface with no
+  file copies.
+- **MCP servers** → translated from the portable `mcp.json` format into native
+  V2 `Mcp.ServerConfig` entries through `ctx.mcp.transform` (a `stdio` server
+  becomes `type: "local"`, a remote server becomes `type: "remote"`).
 - **`PLUGIN_ROOT` / `PLUGIN_DATA`** → provided to stdio subprocess environments,
   with a client-managed persistent data directory per plugin instance.
 
@@ -48,9 +49,10 @@ check for updates, update, list, and store hygiene (doctor/prune) — see
 - No OAuth/credential plumbing: per the spec, authorization is client-managed.
   Opencode already handles OAuth for remote MCP servers (`opencode mcp auth`).
 - No file-based client extension namespace support (none implemented in v1).
-- No hot reload of running Opencode sessions: plugin registrations are applied at
-  Opencode startup; the CLI therefore asks the user to restart Opencode after
-  install/remove/update (§5.12.4).
+- No live reload orchestration by the CLI: V2 watches config directories and
+  reloads the loader plugin on its own, so a registered source is picked up
+  without a restart (§9.1.6); the CLI only prints a restart hint as the
+  deterministic path and never talks to a running Opencode process.
 
 ---
 
@@ -93,20 +95,20 @@ Key normative behaviors the client must implement (full list in §7):
    components; only the narrowest unit is dropped.
 7. **Version consistency**: `mcp.json` `$schema` version must match `plugin.json`'s.
 
-### 2.2 Opencode integration points (verified against the opencode source/docs)
+### 2.2 Opencode integration points (verified against opencode 2.0.16)
 
-| Need | Opencode facility |
+| Need | Opencode V2 facility |
 | --- | --- |
-| Receive config | `["opencode-agent-plugins", { ... }]` → plugin function called as `(input, options)` where `options` is the second tuple element. `PluginOptions = Record<string, unknown>`. |
-| Mutate config | `Hooks.config?: (config: Config) => Promise<void>` — receives the live resolved config; mutations (as done by e.g. `opencode-sdd`) take effect for the session. |
-| Register MCP servers | `config.mcp[name] = { type: "local", command: string[], cwd?, environment?, enabled?, timeout? }` or `{ type: "remote", url, headers?, oauth?, enabled?, timeout? }` (from `opencode.ai/config.json` schema, `McpLocalConfig` / `McpRemoteConfig`). |
-| Register skills | `config.skills.paths: string[]` — each entry is a directory scanned for `SKILL.md` files (absolute paths are used as-is). **Scan-depth discrepancy:** the skills doc describes `skills/*/SKILL.md` (one level); the 1.18.25 PoC observed behavior consistent with a recursive `**/SKILL.md` scan. The design is robust to both (§5.6), and the E2E test pins the actual behavior per release. |
-| Logging | `input.client.app.log({ body: { service, level, message, extra } })` (the `body` wrapper is required — see §9.1). |
-| Workspace context | `input.directory` (workspace dir, used to resolve relative plugin paths), `input.worktree`, `input.$` (Bun shell). |
+| Receive config + options | `plugins: [{ package: "opencode-agent-plugins", options: { ... } }]`; the plugin's default definition is `{ id, setup(ctx) }` and the options arrive as `ctx.options` (`PluginOptions = Record<string, any>`). |
+| Register components | `setup` registers through context **transforms** (`ctx.skill.transform`, `ctx.mcp.transform`); V2 has no mutable global config object. Transforms are replayable: the callback may run after `transform()` resolves, during a batched registry rebuild (§9.1.3). |
+| Register MCP servers | `editor.set(name, config)` with `{ type: "local", command: string[], cwd?, environment?, disabled? }` or `{ type: "remote", url, headers? }`; `timeout` is `{ startup, catalog, execution }`, `enabled` no longer exists (servers are enabled unless `disabled: true`). Code Mode wraps MCP tools by default (`codemode: true`); the client leaves that host default untouched so plugin servers behave exactly like natively-configured ones (§9.1.4). |
+| Register skills | per-skill `editor.add({ id, name, description?, path, content })` — no directory registration. The V2 `skills` config array (paths/URLs) remains the *user-config* surface; plugin registrations are individual definitions. Config-discovered skills are not visible to transforms, so the host enforces config precedence on skill-name collisions (§9.1.5). |
+| Logging | V2's plugin context has no logging API; the client writes `[opencode-agent-plugins]`-prefixed lines to the console, which `opencode serve --print-logs` captures (verified in E2E). |
+| Workspace context | `ctx.location.directory` (workspace dir, used to resolve relative plugin paths) and `ctx.location.project` (`id`, `directory`, `canonical`). |
 
-Opencode's `skills.paths` config also supports `skills.urls` (remote skill indexes);
-we do not use it (the spec's plugin model is directory-based, and URLs would violate
-"no schema/component fetching surprises" — out of scope).
+V2 requires HTTP Basic auth on the server API (username `opencode`, password from
+`OPENCODE_SERVER_PASSWORD`); the E2E suite drives the API through
+`@opencode/client` with those credentials.
 
 Transport mapping caveat: Opencode has no legacy HTTP+SSE client. `sse` entries are
 therefore **skipped** with a reported warning per §7.2.2 rule 4 ("unsupported
@@ -128,33 +130,43 @@ later is a one-line compatibility map (§5.9).
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    ["opencode-agent-plugins", {
-      "plugins": [
-        "./agent-plugins/my-plugin",
-        "git+https://github.com/org/my-plugin.git#v1.2.0"
-      ]
-    }]
+  "plugins": [
+    {
+      "package": "opencode-agent-plugins",
+      "options": {
+        "plugins": [
+          "./agent-plugins/my-plugin",
+          "git+https://github.com/org/my-plugin.git#v1.2.0"
+        ]
+      }
+    }
   ]
 }
 ```
 
-> **Why a single entry with an array, and never two `["opencode-agent-plugins", …]`
-> entries:** Opencode loads duplicate npm packages with the same name and version
-> **only once** (per the plugins doc, "Load order"), so a second entry would be
-> silently ignored — and with two instances there would be no defined precedence
-> between their config mutations. One hook instance owns all plugin registrations
-> for the session, which makes collision handling and dedup deterministic (§5.7).
-> This must be re-verified empirically per Opencode release (§9.1, §11).
+> **Why a single entry with an array, and never two `opencode-agent-plugins`
+> entries:** Opencode deduplicates plugin entries by package identity, so a
+> second entry would be silently ignored — and with two instances there would
+> be no defined precedence between their registrations. One setup instance owns
+> all plugin registrations for the location, which makes collision handling and
+> dedup deterministic (§5.7). This must be re-verified empirically per Opencode
+> release (§9.1, §11). A bare package string (`"plugins":
+> ["opencode-agent-plugins"]`) is a valid V2 entry too; the CLI recognises it
+> and replaces it with the object form on the first write. A legacy V1
+> `["opencode-agent-plugins", {…}]` tuple is read and migrated to this object
+> form by the next install write (§5.11).
 
 All options in one entry:
 
 ```jsonc
-["opencode-agent-plugins", {
-  "plugins": ["./agent-plugins/my-plugin", "git@github.com:org/third.git"],  // string or string[]
-  "prefix": false,        // true: MCP server names become "<plugin-name>-<server>" (sanitized, §5.7)
-  "logLevel": "info"      // debug | info | warn | error (default: info)
-}]
+{
+  "package": "opencode-agent-plugins",
+  "options": {
+    "plugins": ["./agent-plugins/my-plugin", "git@github.com:org/third.git"],  // string or string[]
+    "prefix": false,        // true: MCP server names become "<plugin-name>-<server>" (sanitized, §5.7)
+    "logLevel": "info"      // debug | info | warn | error (default: info)
+  }
+}
 ```
 
 Options schema (parsed with Zod, unknown keys warn):
@@ -163,11 +175,11 @@ Options schema (parsed with Zod, unknown keys warn):
 | --- | --- | --- | --- |
 | `plugins` | `string \| string[]` | — | Plugin source(s): local path, git URL, or an installed plugin name. Required. |
 | `prefix` | `boolean` | `false` | Namespace MCP server names to avoid cross-plugin collisions. Applies to all sources in this entry. |
-| `logLevel` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | Minimum level forwarded to `client.app.log`. |
+| `logLevel` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | Minimum level written to the plugin's console logger. |
 
 ### 3.2 Startup behavior
 
-On every Opencode start the plugin:
+On every Opencode start (when the location loads) the plugin:
 
 1. Resolves each configured source (§5.3): local paths are used directly (realpath,
    `~`-expanded, or relative to the workspace directory); git URLs and installed
@@ -175,38 +187,51 @@ On every Opencode start the plugin:
    startup** (installing/updating is the CLI's job, §5.12).
 2. Validates `plugin.json` (fatal/reject vs. report-and-ignore, per §5).
 3. Discovers skills and MCP servers from fixed locations.
-4. Mutates `config.skills.paths` and `config.mcp` accordingly, following the
-   **precedence principle: user-authored config always wins**. The `config` hook
-   runs after config resolution, so blind mutation would clobber user intent
-   (e.g. an `mcp: { "name": { "enabled": false } }` stub or a user-defined server
-   of the same name). Any pre-existing `config.mcp` entry or `skills.paths` entry
-   that collides with a plugin registration is left untouched; the plugin's
-   registration is skipped and reported. This also gives users an escape hatch
-   the portable format lacks (per-server `timeout`, `enabled`, name overrides):
-   define the entry yourself under the same name and the plugin defers (§5.7).
-   Skills are directory-granular: a skill-name collision with an existing
-   `skills.paths` entry skips the plugin's whole `skills/` dir (user config
-   wins, §5.6).
-5. Logs a structured summary: loaded N skills, M servers (M-local/remote/skipped),
-   per-plugin status. No startup crashes ever — every failure goes through the
-   failure taxonomy (§6).
+4. Registers them through the V2 context transforms (`ctx.skill.transform`,
+   `ctx.mcp.transform`), following the **precedence principle: user-authored
+   config always wins**. MCP: the transform editor exposes config-defined
+   servers, so a colliding name is skipped and reported (user config wins); a
+   collision with a server registered earlier in the same setup run is a
+   plugin–plugin error. Skills: the host's skill registry keeps a config skill
+   over a plugin registration of the same name, and config-discovered skills
+   are not visible to transforms, so the client registers its skills
+   individually and the host enforces precedence on a name collision
+   (§9.1.5). This also gives users an escape hatch the portable format lacks
+   (per-server `timeout`, `disabled`, `codemode`, name overrides): define the
+   entry yourself under the same name and the plugin defers (§5.7). For
+   editor-visible skills collisions, registration stays directory-granular:
+   one colliding name means the plugin's whole `skills/` dir is skipped by the
+   client (error for our own earlier source, warning for another plugin's
+   registration, §5.6).
+5. Logs a structured summary of *attempted* registrations: N skills, M servers
+   (M-local/remote; transport-skipped entries are warned separately),
+   per-plugin status. Collision-skipped components are reported separately and
+   are not subtracted from the counters. No startup crashes ever — every
+   failure goes through the failure taxonomy (§6).
+
+V2 watches config directories and reloads the loader plugin automatically: a
+source installed by the CLI while Opencode is running is picked up by the next
+location load without a restart (§9.1.6).
 
 ### 3.3 What the user sees
 
-- Skills: appear in the `<available_skills>` list automatically (surface —
+- Skills: appear in the `<available_skills>` block automatically (surface —
   system prompt vs. `skill` tool description — is version-dependent, §9.1).
-- MCP tools: available as `<server-name>_*` tools; can be gated with
-  `tools: { "server-name_*": false }` or per-agent overrides as usual.
-- Diagnostics: `client.app.log` entries with `service: "opencode-agent-plugins"`;
-  `opencode debug config` shows the final merged `mcp`/`skills` state.
+- MCP tools: available through Code Mode by default (`tools.<server>.<tool>`
+  inside `execute`), exactly like natively-configured servers; a user who needs
+  the provider's native tool list can pre-define the server with
+  `codemode: false` (user config wins) or gate `<server>_*` through permissions.
+- Diagnostics: `[opencode-agent-plugins]`-prefixed console lines, captured by
+  `opencode serve --print-logs`; `opencode debug config` shows the config state
+  (transform registrations live in the registry, not in the config).
 
 ---
 
 ## 4. Architecture
 
 ```text
-opencode (config hook)                    CLI (opencode-agent-plugins bin)
-   │  config (mutable) + options              │  install | remove | check | update | list
+opencode (V2 plugin setup)                CLI (opencode-agent-plugins bin)
+   │  ctx (location, options, domains)       │  install | remove | check | update | list
    ▼                                          ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │          shared core: one module per spec concern                │
@@ -216,12 +241,12 @@ opencode (config hook)                    CLI (opencode-agent-plugins bin)
 │  failure taxonomy (types shared by both)                         │
 └───────────────────┬────────────────────────────┬─────────────────┘
                     ▼                            ▼
-        plugin entry (opencode Plugin)    CLI entry (bin)
-        wraps core with input.client       wraps core with stdio prompts
+        plugin entry (plain { id, setup })   CLI entry (bin)
+        wraps core with ctx domains       wraps core with stdio prompts
         ──────────────┴──────────────────────────┴──────────────
                     ▼
-        config.skills.paths += <pluginRoot>/skills
-        config.mcp[name]     = { type: "local"|"remote", ... }
+        ctx.skill.transform → editor.add({ id, name, path, content })
+        ctx.mcp.transform   → editor.set(name, { type: "local"|"remote", ... })
         (PLUGIN_DATA dirs created when stdio servers are registered)
 ```
 
@@ -239,12 +264,12 @@ code path (see §6).
 ```text
 opencode-agent-plugins/
 ├── src/
-│   ├── plugin entry             # (input, options) => Hooks
+│   ├── plugin entry             # plain { id, setup } definition
 │   ├── CLI                      # the opencode-agent-plugins binary
 │   ├── lib/                     # shared core: one module per spec concern
 │   └── schemas/                 # vendored Agent Plugins schemas (committed)
 ├── scripts/                     # build/dev gates (schema sync, import checks)
-├── test/                        # unit/integration test support (helpers, stub client)
+├── test/                        # unit/integration test support (helpers, stub context)
 └── test-e2e/                    # Docker E2E suite against a real opencode
 ```
 
@@ -257,17 +282,18 @@ artifacts, never fetched at runtime (§5.4).
 
 **Language and build.** The tool is written in **TypeScript** (ESM, compiled with
 `tsc` to `build/`; no bundler — mirrors the `opencode-sdd`
-layout). Target runtimes: **Bun** for the plugin entrypoint (Opencode's plugin
-loader) and **Node ≥ 26** for the CLI; shared-core code sticks to the portable
-intersection (`node:*` builtins only — no Bun-only APIs — so both runtimes run
-the same compiled output).
+layout). Target runtimes: **Bun** for the plugin entrypoint (the pinned
+opencode 2.0.16 npm distribution is a Bun-compiled binary; V2's host process
+imports the plugin directly) and **Node ≥ 26** for the CLI; shared-core code
+sticks to the portable intersection (`node:*` builtins only — no runtime-specific
+APIs — so both runtimes run the same compiled output).
 
 **Two entrypoints, one package.** The npm package exposes exactly two
 entrypoints, both thin wrappers over the shared core:
 
 | # | Entrypoint | Output | Contract | Runtime |
 | --- | --- | --- | --- | --- |
-| 1 | Opencode plugin | `build/index.js` | Default-exports a `Plugin` (`(input, options) => Hooks`); only the `config` hook is used (§5.1). Zero top-level side effects (§5.1 import-safety note). | Bun (inside Opencode) |
+| 1 | Opencode plugin | `build/index.js` | Default-exports a V2 plugin definition `{ id, setup }`; only the `skill`/`mcp` transforms are used (§5.1). Zero top-level side effects (§5.1 import-safety note). | Bun (inside Opencode's host process) |
 | 2 | CLI | `build/cli/index.js` | Exposed as the `opencode-agent-plugins` bin with a `#!/usr/bin/env node` shebang; command surface in §5.11. | Node ≥ 26 |
 
 ```jsonc
@@ -285,11 +311,17 @@ entrypoints, both thin wrappers over the shared core:
 Dependency boundaries:
 
 - The shared core imports only `node:*`, Ajv, Zod, and `jsonc-parser` —
-  **never** `@opencode-ai/*`, so the CLI installs and runs with no Opencode
+  **never** `@opencode/*`, so the CLI installs and runs with no Opencode
   dependency.
-- The plugin entry uses `@opencode-ai/plugin` as a **type-only** import
-  (`import type { Plugin, Hooks }`), so it stays a devDependency and nothing
-  Opencode-specific ends up in the CLI's module graph.
+- The plugin entry uses `@opencode/plugin` as a **type-only** import
+  (`import type { Context } from "@opencode/plugin/promise/plugin"`), so it
+  stays a devDependency and nothing Opencode-specific ends up in the CLI's
+  module graph.
+- The default export is a plain definition object rather than
+  `Plugin.define(...)`: the V2 host accepts any default definition with an `id`
+  and a `setup`, `Plugin.define` is an identity function, and avoiding the
+  value import keeps the compiled bundle free of runtime `@opencode/*`
+  dependencies (pinned by `scripts/check-runtime-imports.ts` in `pnpm build`).
 
 **Decision: single package — not a multi-package workspace.** A
 `packages/core` + `packages/opencode-plugin` + `packages/cli` workspace was
@@ -318,32 +350,39 @@ considered and rejected for v1:
 ### 5.1 Entry point
 
 ```ts
-import type { Plugin, Hooks } from "@opencode-ai/plugin";
+import type { Context } from "@opencode/plugin/promise/plugin";
 
-const agentPlugins: Plugin = async (input, options) => {
-  const logger = createLogger(input.client, options);
-  return {
-    config: async (config) => {
-      await registerAgentPlugins(config, options, logger);
-    },
-  };
+const agentPlugins = {
+  id: "opencode-agent-plugins",
+  async setup(context: Context): Promise<void> {
+    const parsed = parseOptions(context.options ?? {});
+    const logger = createLogger(parsed?.options.logLevel ?? "info");
+    await registerAgentPlugins(context, parsed, logger);
+  },
 };
 
 export default agentPlugins;
 ```
 
-The `config` hook is the only hook we need: registration mutates `config.mcp` and
-`config.skills`. All per-plugin failures are caught, mapped through the taxonomy
-(§6) and logged; the hook never throws (a throwing hook would log a plugin error
-but, per Opencode behavior, we prefer explicit per-plugin reporting).
+`setup` is the only entry point we need: registration goes through
+`ctx.skill.transform` and `ctx.mcp.transform` (§5.6, §5.7). All per-plugin
+failures are caught, mapped through the taxonomy (§6) and logged; `setup` never
+throws (a throwing plugin would be reported by Opencode, but we prefer explicit
+per-plugin reporting).
 
 Import-safety note: a module-level error in the plugin file makes Opencode skip the
-plugin **silently** (verified on 1.18.25). The bundle must have no top-level side
-effects that can throw; all work happens inside the hooks.
+plugin — V2 logs `failed to load plugin` (verified on 2.0.16), but the bundle must
+still have no top-level side effects that can throw; all work happens inside
+`setup`.
 
-Defensive note: `config.skills` may be missing from the TS type of the installed
-SDK version; the code normalizes it (`config.skills ??= { paths: [] }`) and treats
-the runtime schema (`opencode.ai/config.json`) as authoritative.
+Type note: the type-only `Context` import makes `pnpm typecheck` fail if the V2
+context ever stops satisfying the pipeline's structural expectations
+(`RegistrationContext` in `src/register-types.ts`).
+
+Transform-timing note: V2 may replay a transform callback *after* `transform()`
+resolves (batched registry rebuild), so registration code must not depend on
+callback side effects for its return values. Collision checks and reports run
+inside the callback (§9.1.3).
 
 ### 5.2 Options
 
@@ -362,9 +401,10 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 ```
 
 - **Local path** — absolute, `~/...` (expand `HOME`), or relative (resolved against
-  `input.directory` — the workspace dir — since that is the cwd the user configures
-  from). Used **in place**: edits to a path-sourced plugin are picked up on the next
-  Opencode start; this is the developer workflow. A local path always points at the
+  `ctx.location.directory` — the workspace dir — since that is the cwd the user
+  configures from). Used **in place**: edits to a path-sourced plugin are picked up
+  on the next location load (§5.12.4; a restart remains the deterministic path);
+  this is the developer workflow. A local path always points at the
   plugin root itself; it carries no fragment.
 - **Git URL** — https or ssh, with an optional `#fragment`: a ref pin
   (`#v1.2.0`, `#main`, `#<sha>`), a subpath selection
@@ -407,7 +447,7 @@ set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
 - Only git-sourced plugins live in the store. Local-path plugins are never copied
   (editing source is the point of using a path).
 
-#### 5.3.3 Resolution order at startup (plugin/config hook)
+#### 5.3.3 Resolution order at startup (plugin setup)
 
 1. Parse the source string (§5.3.1).
 2. Local path that exists → use it in place (realpath, then containment as today).
@@ -541,45 +581,49 @@ Rules enforced:
     name.
     - `description` ≤ 1024 chars.
     - Invalid skill → skip it, warn, continue with others (§7.1).
-- Registration: push the **absolute plugin `skills/` dir** into `config.skills.paths`
-  (absolute paths are used as-is, so no copying and no staleness).
-- **Nested `SKILL.md` leak guard.** The spec defines skills as *immediate children
-  only* (§7.1: "MUST NOT recursively search deeper"). If Opencode's scan of
-  `skills.paths` is recursive (`**`), a stray `SKILL.md` nested inside a skill dir
-  (e.g. `skills/foo/references/SKILL.md`) would be exposed even though we never
-  validated it as a skill. Mitigation: at discovery time, detect any `SKILL.md`
-  deeper than `skills/<name>/SKILL.md` and **warn loudly** (naming the file and
-  the consequence); such a file is almost always a plugin authoring mistake. If a
-  future Opencode version proves to scan one level deep, the warning becomes a
-  no-op note. Copying/symlinking validated skills into a client-managed dir was
-  considered and rejected: it adds staleness and sync complexity to close a hole
-  that only exists under one of the two observed scan behaviors.
-- Collisions: skill names must be unique across all locations (per the skills
-  doc). At registration time we scan the already-present `config.skills.paths`
-  targets (paths we registered this run, plus any pre-existing entries) and
-  compare their skill names against the plugin's. **User config wins**: a
-  collision with a *pre-existing* entry warns and we skip ours; a collision
-  with a path we registered earlier in this same hook run is a *plugin–plugin*
-  collision, errors, and skips the later one. Registration is
-  directory-granular, so a colliding name drops the plugin's whole `skills/`
-  dir (with a warning naming the skill), mirroring §5.7's `mcp` override
-  semantics.
+- Registration: register each validated skill individually through
+  `ctx.skill.transform` with `{ id, name, description, path: <skill>/SKILL.md,
+  content }` — no directory registration and no copying. `path` points at the
+  real on-disk `SKILL.md`, so relative resources beside it stay reachable for
+  the host.
+- **Nested `SKILL.md` files.** The spec defines skills as *immediate children
+  only* (§7.1: "MUST NOT recursively search deeper"). V2 registers plugin
+  skills individually, so a stray `SKILL.md` nested inside a skill dir (e.g.
+  `skills/foo/references/SKILL.md`) is never registered; we still warn (naming
+  the file) because it is almost always an authoring mistake. A user-authored
+  `skills` *directory* is a different surface: V2 scans it recursively and
+  would expose the nested file — pinned per release in E2E (§9.1.5).
+- Collisions: skill names must be unique at the location. Plugin–plugin
+  collisions (our own sources in one setup run) are detected from the transform
+  editor and reported as errors, skipping the later plugin's whole `skills/`
+  dir. A collision with a registration from another opencode plugin (visible
+  in the editor, not ours) is reported as a warning and likewise skips the
+  dir; the design does not arbitrate cross-plugin precedence. Config skill
+  precedence is enforced by the host: V2's skill registry keeps a config skill
+  over a plugin registration of the same name, and config-discovered skills
+  are not visible to transforms, so the client cannot see or skip them itself
+  (§9.1.5); the E2E asserts the user's skill wins. Registration remains
+  directory-granular on the client side, so one detected collision drops the
+  plugin's whole `skills/` dir; the report names the skill and uses the
+  collision's severity (error for one of this setup run's own earlier sources,
+  warning for another opencode plugin's registration), mirroring §5.7's `mcp`
+  override semantics.
 
 ### 5.7 MCP translation
 
-Portable format → Opencode native mapping:
+Portable format → Opencode native mapping (inside `ctx.mcp.transform`):
 
 ```ts
 // stdio → local
-config.mcp[name] = {
+editor.set(name, {
   type: "local",
   command: [server.command, ...server.args],   // single token + args preserved
   environment: { ...server.env, PLUGIN_ROOT, PLUGIN_DATA },
   ...(server.cwd ? { cwd: expandedCwd } : { cwd: pluginRoot }),
-};
+});
 
 // streamable-http → remote
-config.mcp[name] = { type: "remote", url: server.url, ...(server.headers && { headers: server.headers }) };
+editor.set(name, { type: "remote", url: server.url, ...(server.headers && { headers: server.headers }) });
 
 // sse → skipped (unsupported transport, §7.2.2 rule 4), warned
 ```
@@ -600,15 +644,22 @@ Details:
   (HTTP/MCP/auth) taking precedence over configured ones, and not forwarding
   configured headers across redirects, are **delegated to Opencode's MCP client**
   and verified in E2E, not reimplemented.
-- **Name collision handling — user config wins.** If `config.mcp[name]` already
-  exists, the entry's origin decides: an entry we registered earlier in this same
-  hook run (tracked in a local set) is a *plugin–plugin* collision → error, skip
-  the later one; anything else is *user config* → warn, skip ours, leave theirs
-  untouched. With `prefix: true` we register as `<plugin-name>-<name>` instead
-  (after sanitization, below) and only collide-skip if *that* name is taken.
-  This makes `mcp: { "name": { "enabled": false } }` or a full user-defined entry
-  a supported per-server override (timeout, enabled, rename) without any
-  extension namespace.
+- **Name collision handling — user config wins.** The transform editor exposes
+  config-defined servers and earlier plugin registrations. If `editor.get(name)`
+  already exists, the entry is skipped and reported: a name registered earlier
+  in this same setup run (tracked in local state, updated from inside the
+  callback) is a *plugin–plugin* collision → error; anything else is *user
+  config* → warn, leave theirs untouched. With `prefix: true` we register as
+  `<plugin-name>-<name>` instead (after sanitization, below) and only
+  collide-skip if *that* name is taken. This makes `disabled: true`,
+  `timeout`, or a full user-defined entry a supported per-server override
+  without any extension namespace.
+- **Code Mode is the host default.** V2 wraps MCP tools in Code Mode
+  (`codemode: true`), so tools are callable as `tools.<server>.<tool>` inside
+  `execute` rather than appearing on the provider's native tool list. The
+  client leaves the default untouched, so plugin-registered servers behave
+  exactly like natively-configured ones; a user who needs the native list can
+  pre-define the server with `codemode: false` (user config wins, above).
 - **Server-name sanitization.** MCP server names become LLM tool-name prefixes
   (`<server>_<tool>`); many providers restrict tool names to `[A-Za-z0-9_-]`.
   Spec plugin names allow dots, so prefixed names are sanitized: `.` → `-`, any
@@ -657,7 +708,10 @@ Details:
 
 ### 5.10 Logging and errors
 
-- Every notice goes through `client.app.log({ service: "opencode-agent-plugins", level, message, extra })`; structured `extra` carries plugin name, component type, and spec section reference (e.g. `§5.5`).
+- Every notice is written to the console as one `[opencode-agent-plugins]` line
+  with the structured metadata as trailing JSON (level, message, extra);
+  `opencode serve --print-logs` captures it. V2's plugin context exposes no
+  logging API (§2.2).
 - Error taxonomy types mirror the spec's failure boundary ladder, so tests can assert exact classifications (§6).
 
 ### 5.11 CLI interface
@@ -688,30 +742,42 @@ Behavior notes:
 - **Interaction**: prompts on stdin for confirmation; `--yes` for scripts/CI.
   `--dry-run` prints the plan (components that would be registered) without
   touching anything.
-- **Config registration** (`install`): edits the `plugin` array of the resolved
+- **Config registration** (`install`): edits the `plugins` array of the resolved
   Opencode config — the project `opencode.json` by default, `--global` for
-  `~/.config/opencode/opencode.json`, `--config <path>` to pick a file. If both
+  `~/.config/opencode/opencode.json`, `--config <path>` to pick a file. The V2
+  entry is `{ "package": "opencode-agent-plugins", "options": { … } }` (a bare
+  package string is recognised and replaced by the object form on the first
+  write); a legacy V1 `["opencode-agent-plugins", {…}]` tuple is read, its
+  sources and other options merged into the entry (the entry's keys win), and
+  the tuple removed on the next `install` write (so V2 never loads the loader
+  twice). If both
   `opencode.json` and `opencode.jsonc` exist in the target scope, the `.jsonc`
   file wins and the CLI says so; if neither exists, it creates `opencode.json`.
   The edit is
-  **JSONC-preserving** (`jsonc-parser`, same approach as `opencode-sdd`): only the
-  `plugin` array changes, comments/formatting elsewhere stay. Written atomically
+  **JSONC-preserving** (`jsonc-parser`, same approach as `opencode-sdd`): only
+  the plugin arrays (`plugins`, plus a legacy `plugin` tuple when present)
+  change; comments/formatting elsewhere stay. Written atomically
   (temp file + rename) with a timestamped backup in the store's `backups/` dir —
   **not** `<config>.bak` next to the config, which would invite accidentally
   committing `opencode.json.bak` into the user's repo — and re-parsed before
   writing to guarantee the result is valid: a CLI can never leave Opencode with a
   corrupt config (§5.12.4).
 - **Loader-entry bootstrap** (`install`): registering a source is inert
-  unless the config already contains the `["opencode-agent-plugins", {…}]`
-  loader tuple — without it Opencode never loads the loader, so the
-  registered source is never resolved. When the resolved config has no
-  loader tuple, `install` therefore probes it first (read-only,
-  `probeConfig`), warns the user, and — in interactive mode — asks whether
-  to add the entry to the opencode config before registering; declining
-  aborts the whole install with nothing written (the staged git tree is
-  dropped). Under `--yes` the entry is added automatically with the warning
-  only (skipping confirmation prompts). Existing configs that already have
-  the tuple are never re-prompted.
+  unless the config already contains the `{ "package":
+  "opencode-agent-plugins", … }` loader entry — without it Opencode never
+  loads the loader, so the registered source is never resolved. When the
+  resolved config has no loader entry, `install` therefore probes it first
+  (read-only, `probeConfig`), warns the user, and — in interactive mode — asks
+  whether to add the entry to the opencode config before registering;
+  declining aborts the whole install with nothing written (the staged git tree
+  is dropped). Under `--yes` the entry is added automatically with the warning
+  only (skipping confirmation prompts). Existing configs that already have the
+  entry (V2 object or legacy tuple) are never re-prompted; a legacy tuple gets
+  a note that it will be migrated.
+- **Live reload:** V2 watches config directories and reloads the loader plugin,
+  so a source installed while Opencode runs is picked up by the next location
+  load without a restart (verified on 2.0.16, §9.1.6). The CLI still prints the
+  restart hint, which remains the deterministic path.
 - The registered value is the **original source string** exactly as given (git
   URL including any `#ref`/`:subdir` fragment, or the local path) — the startup
   resolver (§5.3.3) maps it back to the store entry. We never register
@@ -756,8 +822,9 @@ Failure at any validation step aborts with nothing changed on disk.
    two sources), refuse with a list of matching slugs — never guess which instance
    the user means.
 2. Print what will be removed (with `--dry-run`), ask for confirmation.
-3. Delete the `plugin` config entry (JSONC-preserving, atomic, backup in
-   `backups/`) and remove `installed/<slug>`, `meta/<slug>.json`, **and**
+3. Delete the source from the `plugins` entry (and any legacy `plugin` tuple;
+   the entry goes when its last source does) — JSONC-preserving, atomic, backup
+   in `backups/` — and remove `installed/<slug>`, `meta/<slug>.json`, **and**
    `data/<slug>` unless `--keep-data`. The three deletions are attempted
    independently; when one fails after the config entry is gone, the failure
    names the leftover paths (`install-fail`) instead of aborting with a raw
@@ -817,34 +884,37 @@ Ref semantics:
 
 #### 5.12.4 How Opencode learns about changes — and can they break it?
 
-**Opencode learns about changes on its next start.** The plugin's `config` hook runs
-exactly once per Opencode start and there is no supported live re-registration:
-plugin modules are imported at startup, MCP clients connect once, and the skill
-list is built at session start — config-file watching in the TUI reloads config
-*values*, not plugin modules or their produced registrations. So:
+**V2 watches config directories and reloads the loader plugin.** A source
+installed/removed/updated by the CLI is picked up by the next location load
+without a restart (verified on 2.0.16, §9.1.6): MCP servers reconnect and the
+skill list rebuilds as part of the reload. V2 also watches the loaded plugin's
+files, so a store swap can trigger a reload as well. Because reload behavior is
+a host feature that can change between releases, the CLI keeps printing a
+deterministic hint:
 
 - `install`, `remove`, and `update` **print — they do not prompt or force — a
-  "restart Opencode" message**. (The CLI could detect a running server and say so;
-  it will not attempt to reload it.)
+  "restart Opencode" message**, which remains the guaranteed way to apply the
+  change. (The CLI never talks to a running server.)
 - `check`, `list`, and `doctor` are read-only and need **no** restart.
 
 **Can these changes break Opencode?** No hard breakage is expected, and the design
 bounds the realistic failure modes:
 
-1. **Plugin load failures are non-fatal by construction.** Opencode wraps plugin
-   import and every hook in try/catch — a broken plugin is skipped or reported
-   ("plugin config hook failed") and Opencode continues (verified empirically,
-   §9.1). A plugin with an invalid manifest is rejected by *our* loader before
-   anything is registered, and each component failure is isolated per §6.
+1. **Plugin load failures are non-fatal by construction.** Opencode reports a
+   plugin that fails to import or define itself ("failed to load plugin") and
+   continues (verified empirically, §9.1). A plugin with an invalid manifest is
+   rejected by *our* loader before anything is registered, and each component
+   failure is isolated per §6.
 2. **The one real risk is a bad config edit by the CLI** — e.g. an invalid
-   `plugin` entry would make Opencode refuse the config at startup. Mitigation:
+   `plugins` entry would make Opencode refuse the config at startup. Mitigation:
    JSONC-preserving edits, validity re-parse before write, atomic write +
    timestamped backup in the store's `backups/` dir, and abort-on-conflict
    (never overwrite a config that changed between read and write).
 3. **Misbehaving MCP servers are bounded by Opencode**: a stdio server that hangs
-   or fails the handshake is dropped after the tool-fetch timeout (5000 ms
-   default) and does not block other components. `remove`/`update` cannot leave a
-   half-started server behind because registrations only change at startup.
+   or fails the handshake is dropped after the startup/catalog timeout (§2.2;
+   30 s defaults in 2.0.16) and does not block other components. `remove`/`update`
+   cannot leave a half-started server behind because registrations only change on
+   a location reload.
 4. **Supply-chain/trust note**: installing a plugin means Opencode will later
    execute the stdio commands the plugin declares. The install preview (§5.12.1)
    surfaces these before confirmation; users should pin `#ref` (tag/commit) for
@@ -870,16 +940,16 @@ bounds the realistic failure modes:
 | `mcp.json` invalid JSON / wrong version / unknown `$schema` / bad top-level shape | mcp | disable MCP only, continue with skills | error |
 | Invalid individual server entry (incl. remote URL/header rule violations, §5.7) | server | skip entry, continue | warn |
 | Unsupported transport (`sse`) | server | skip entry, continue | warn |
-| Server name collides with existing `config.mcp` entry | server | existing entry wins — user config: warn + skip ours; plugin–plugin (same hook run): error + skip the later one | warn / error |
-| Skill name collides with an existing `skills.paths` entry | skill | existing entry wins — user config: warn + skip ours; plugin–plugin (same hook run): error + skip the later one | warn / error |
-| Nested `SKILL.md` deeper than `skills/<name>/` | skill | not a skill per spec §7.1; not registered by us; warn that Opencode may still expose it (§5.6) | warn |
+| Server name collides with a config-defined or earlier-plugin server | server | existing entry wins — user config: warn + skip ours; plugin–plugin (same setup run): error + skip the later one | warn / error |
+| Skill name collides with an existing registration | skill | existing skill wins — another opencode plugin: warn + skip the plugin's whole `skills/` dir; plugin–plugin (same setup run): error + skip the later plugin's whole `skills/` dir; config skill collisions are enforced by the host's registry (user config wins, not reported by the client — §9.1.5) | warn / error |
+| Nested `SKILL.md` deeper than `skills/<name>/` | skill | not a skill per spec §7.1; never registered by the plugin; warned as an authoring mistake. A user-authored config `skills` directory is scanned recursively by the host and would expose it (§9.1.5) | warn |
 | Server fails to start/connect/auth (runtime) | server | Opencode drops it; other components unaffected | warn (from Opencode) |
 | Git-sourced plugin not installed at startup | source | skip entry, continue — no network fetch | warn |
 | Installed store entry corrupted / missing manifest | source | reject plugin, continue with others | error |
 | `install`: fetch, clone, validation, subpath resolution, or store write fails; `remove`: store deletion fails | install | abort; install rolls back so nothing is written, remove names the leftover paths | error |
 | `check`: remote unreachable / auth failure | check | report status unknown, no changes | warn |
 | `update`: moved tag / non-fast-forward ref | update | refuse, keep current tree | warn |
-| CLI config edit conflicts or fails re-parse | config | abort, keep timestamped backup in store `backups/`, nothing changed | error |
+| CLI config edit conflicts, invalid `plugins` shape, or fails re-parse | config | abort, keep timestamped backup in store `backups/`, nothing changed | error |
 
 ---
 
@@ -926,71 +996,98 @@ these, the E2E test (§9.2) is the tripwire.
 
 | Decision | Choice | Rationale |
 | --- | --- | --- |
-| Language/build | TypeScript, ESM, `tsc` → `build/` (mirrors `opencode-sdd` layout, `@opencode-ai/plugin` d.ts import) | Plugins are consumed by Bun; no bundler needed (§4.2) |
+| Language/build | TypeScript, ESM, `tsc` → `build/` (mirrors `opencode-sdd` layout, `@opencode/plugin` type-only d.ts import) | Opencode's Bun host imports the plugin directly; no bundler needed (§4.2) |
 | Entrypoints | Two per package: opencode plugin (`main`/`exports["."]`) + CLI (`bin`); both thin wrappers over the shared core | §4.2 |
 | Packaging | Single npm package, **not** a multi-package workspace | Plugin + CLI must version/publish together; lib boundary enforced by module graph (§4.2) |
 | Validation | Ajv with the two vendored JSON schemas | Exact spec fidelity; per-entry validation via `#/$defs/server`; no network |
-| Options parsing | Zod | Small, typed; mirrors `@opencode-ai/plugin` `tool.schema` style |
+| Options parsing | Zod | Small, typed; the plugin's own options schema (the V2 SDK uses Effect Schema internally) |
 | Filesystem | `node:fs/promises` + `fs.realpath` | Deterministic containment |
 | Testing | Vitest unit + integration | Matches sdd test setup |
-| Package | `opencode-agent-plugins`, `main: build/index.js`, `files: ["build"]`, default ESM export | Standard opencode npm plugin |
+| Package | `opencode-agent-plugins`, `main: build/index.js`, `files: ["build"]`, default ESM export of the V2 definition | Standard opencode npm plugin |
 
 ---
 
 ## 9. Testing strategy
 
-### 9.1 Empirical verification (proven, 2026-09-09, opencode 1.18.30)
+### 9.1 Empirical verification (proven, 2026-09-24, opencode 2.0.16)
 
-The E2E suite (§9.2.4) was re-run against opencode 1.18.30 in full
-(5 scenarios, 21 assertions) and passes; the findings below were first
-established on opencode 1.18.25 and remain current.
+The E2E suite (§9.2.4) was re-run against opencode 2.0.16 in full
+(5 scenario files, 22 assertions) and passes. The V1-era findings were first
+established on opencode 1.18.25/1.18.30; the list below is the V2 result.
 
-The core mechanism was **empirically proven** end-to-end: a plugin loaded as
-`["/path/to/loader.mjs", { plugins: "<dir>" }]` was run against a real Opencode
-inside a throwaway Docker image, with a fake OpenAI-compatible server capturing
-the exact request Opencode sends to the model. The proof compared:
+The core mechanism is **empirically proven** end-to-end: the loader plugin is
+loaded as `{ package: "/app/plugin", options: { plugins: "<dir>" } }` (and, for
+the CLI chain, as the npm package name) against a real Opencode inside a
+throwaway Docker image, with a fake OpenAI-compatible server capturing the
+exact request Opencode sends to the model. The proof compares:
 
-- **Hook mode** — components registered by the loader's `config` hook
-  (mutating `config.mcp` and `config.skills.paths`), and
-- **Static mode** — the identical values written directly in `opencode.json`
-  (baseline).
+- **Plugin mode** — components registered by the loader's V2 `setup` through
+  `ctx.skill.transform` / `ctx.mcp.transform`, and
+- **Static mode** — the equivalent native V2 config written directly in
+  `opencode.json` (baseline).
 
 What was proven:
 
-- The `config` hook runs, receives the options (`{ plugins: "<dir>" }`), and its
-  mutations are **honored**: the plugin's stdio MCP server is spawned, and its
-  tool (`echo_ping`) plus the plugin's skill (`hello`) appear in the captured
-  model request — including `<available_skills>` in the system prompt.
-- `PLUGIN_ROOT`/`PLUGIN_DATA` are injected: the MCP tool description reported the
-  real plugin root and the loader-created per-instance data dir (the PoC used a
-  prototype layout `~/.local/share/opencode/agent-plugins/<name>-<hash8>/data`;
-  the final layout is §5.8), and the spawned
-  server ran with `cwd` = plugin root (spec default honored).
-- Hook mode is behaviorally identical to static mode — the config hook is the
-  right mechanism and equivalent to native config.
+- The plugin's `setup` runs, receives `ctx.options`, and its transforms are
+  **honored**: the plugin's stdio MCP server connects, its tool (`echo_ping`)
+  is callable through Code Mode, and the plugin's skill (`hello`) appears in
+  the captured model request's `<available_skills>`.
+- `PLUGIN_ROOT`/`PLUGIN_DATA` are injected: the MCP tool result reported the
+  real plugin root and the loader-created per-instance data dir (§5.8), and the
+  spawned server ran with `cwd` = plugin root (spec default honored).
+- Plugin mode and static mode are behaviorally equivalent for the shared
+  components; the only deliberate difference is the nested `SKILL.md` case
+  (finding 5).
 
 Findings that adjust the design:
 
-1. **Config plugin spec form.** On 1.18.25 the tuple form `["pkg" | "/path.mjs", { options }]`
-   works; the V2 object form `{ "package": ..., "options": {...} }` is **rejected**
-   by the V1 runtime (`Expected string | array`). Keep the tuple form as documented
-   in §3.1. (The public `opencode.ai/config.json` schema matches the tuple form.)
-2. **Silent import failures.** A module-level error in the plugin file (e.g. a bad
-   import) causes the plugin to be skipped with no visible error in `opencode run`.
-   The production loader must import with zero side effects and register/log loudly.
-3. **`client.app.log` shape.** Calls must use `client.app.log({ body: {...} })`; the
-   schema-less form throws inside the hook.
-4. **Skills are advertised in the system prompt.** In this version the
-   `<available_skills>` block lives in the model-visible system prompt (not in the
-   `skill` tool description); the `skill` tool description only says "skills listed
-   in your system prompt". **This contradicts the current skills doc** ("OpenCode
-   lists available skills in the `skill` tool description"), so the surface is
-   version-dependent: conformance checks must accept the block in *either* the
-   system prompt or the tool description, never assert on exactly one.
-5. **Placeholder expansion is the client's job.** Opencode passes configured `env`
-   values verbatim (a `${PLUGIN_DATA}/echo` value stayed literally `${PLUGIN_DATA}/echo`
-   in the spawned server's env), confirming the loader must expand placeholders
-   before registration, per §5.5.
+1. **V2 plugin definition.** A plain default export `{ id, setup }` loads (no
+   `Plugin.define` call needed); a V1 function export fails with "Plugin must
+   export a default definition with an id and an effect or setup function".
+2. **Local plugin paths are directories.** A configured local entry must be a
+   plugin directory; a file path is rejected ("configured plugin path must be
+   a directory"). For directory targets, 2.0.16 resolves `<dir>/server.js`
+   (the package-root import fallback is rejected for directories), so the E2E
+   image ships a `server.js` shim re-exporting the compiled entry. npm-name
+   entries resolve through the package `main`.
+3. **Transform replay timing.** `ctx.*.transform(cb)` may resolve before `cb`
+   runs (the registry rebuild is batched), so counters and cross-source state
+   must not depend on callback side effects; collision checks belong inside the
+   callback, which sees config-defined and earlier-plugin entries.
+4. **Code Mode is the default.** MCP tools are wrapped in Code Mode
+   (`tools.<server>.<tool>` inside `execute`) unless the server sets
+   `codemode: false`; the client leaves the host default untouched and the E2E
+   drives tools through `execute`.
+5. **Skills.** V2 registers skills individually (id + content); config skills
+   are not visible to plugin transforms, and the host keeps a config skill over
+   a plugin registration of the same name (user config wins). A user-authored
+   config `skills` *directory* is scanned recursively, so a nested `SKILL.md`
+   IS exposed there — the plugin's own registration never exposes it. On
+   2.0.16 the `<available_skills>` block is part of the system prompt; some
+   releases carry it in the `skill` tool description instead, so conformance
+   checks accept either surface (`test-e2e/top-plugins.e2e.test.ts`).
+6. **Config reload.** V2 watches config directories and reloads the loader
+   plugin: a source installed while Opencode runs is picked up without a
+   restart (the V1 "restart required" finding no longer holds).
+7. **Logging.** There is no plugin logging API; `[opencode-agent-plugins]`
+   console lines appear in `opencode serve --print-logs` output.
+8. **Placeholder expansion is the client's job.** Opencode passes configured
+   `env` values verbatim (a `${PLUGIN_DATA}/echo` value stayed literal),
+   confirming the loader must expand placeholders before registration (§5.5).
+9. **MCP readiness is asynchronous, and `connected` precedes the tools.**
+   A server reports `pending` before `connected`, and `mcp.list` shows
+   `connected` BEFORE the server's tools reach the tool registry: Opencode
+   registers them through a debounced reconcile of the `mcp.tools.changed`
+   event (100 ms in 2.0.16, `packages/core/src/tool/mcp.ts`), while the Code
+   Mode `execute` inventory is a snapshot of that registry. The E2E driver
+   therefore polls `mcp.list` until the expected state has held past that
+   debounce; polling for `connected` alone lets a prompt land inside the
+   window and fail with `Unknown tool '<server>.<tool>'` even though the
+   server is connected and reports its tools.
+10. **The npm cache is generation-based.** 2.0.16 resolves npm-name plugin
+    entries under `<cache>/opencode/npm/<name@spec>/<generation>/node_modules/`
+    and reuses the newest generation when the package directory exists — the
+    E2E image seeds this path so the unpublished local build is tested.
 
 ### 9.2 Unit tests
 
@@ -1003,7 +1100,9 @@ Findings that adjust the design:
      case-insensitive duplicate header names → invalid entry.
    - Name collisions and sanitization (§5.7): user entry wins, plugin–plugin
      collision skips the later one, dotted plugin names sanitize to `-`. Skill
-     name collisions (§5.6) behave the same way at directory granularity.
+     collisions (§5.6): plugin–plugin collisions are client-detected and skip
+     the later plugin's whole `skills/` dir; config collisions are host-enforced
+     (assert in E2E, §9.1.5) and invisible to the client.
    - Nested `SKILL.md` below `skills/<name>/` → discovery warning, not registered.
    - Placeholder expansion: `./`, `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`, escape attempts
      (`../` both pre- and post-expansion), literal unknown placeholders, expansion
@@ -1012,8 +1111,9 @@ Findings that adjust the design:
      subdirs, subdir slug derivation and truncation (§5.3.4).
    - Failure taxonomy: one test per §6 row asserting the classification and that
      remaining components load.
-2. **Integration tests**: run the loader against a minimal fake `Config` object;
-   assert `config.mcp`/`config.skills.paths` mutations and `PLUGIN_DATA` creation.
+2. **Integration tests**: run the registration pipeline against a stub V2
+   context (`test/stub-context.ts`); assert the transform registrations and
+   `PLUGIN_DATA` creation.
 3. **CLI tests**: install/update/remove flows against local git fixtures (a bare
    repo exercised via a `file://` path or a local `git://`/ssh test remote):
    - install validates before registering, preview lists components, `--dry-run`
@@ -1030,7 +1130,7 @@ Findings that adjust the design:
 4. **E2E (CI-gating per Opencode release)**: the scenario described in §9.1 — run
    Opencode against a fixture plugin in a clean environment and assert the
    captured model request. This is the only test layer that catches silent
-   regressions in the integration itself (import-safety finding §9.1.2, scan
+   regressions in the integration itself (import-safety note §5.1, scan
    depth, `<available_skills>` surface, host-delegated conformance items §7), so
    it is a release gate, not an optional extra.
 5. **Schema provenance test**: dev script asserts the vendored schemas match
@@ -1038,9 +1138,10 @@ Findings that adjust the design:
 6. **Real-world plugin suite (opt-in)**: `E2E_TOP_PLUGINS=1` installs the
    top-ranked published Agent Plugins into clean containers and records the
    install preview, a validation-pipeline tree scan, host-side registration
-   and discovery (`/config`, `/mcp`, `/skill`), and the captured provider
-   request. GitHub and third-party MCP endpoints make it non-hermetic, so it
-   is skipped unless explicitly opted in; CI runs the hermetic scenarios only.
+   and discovery (`config.get`, `mcp.list`, `skill.list`), and the captured
+   provider request. GitHub and third-party MCP endpoints make it
+   non-hermetic, so it is skipped unless explicitly opted in; CI runs the
+   hermetic scenarios only.
 
 ---
 
@@ -1052,9 +1153,9 @@ Findings that adjust the design:
   warn + skip (git URL not installed yet, §5.3.3); other entries still load.
 - **`skills/` with nested skill dirs** → only immediate children are considered
   skills (spec §7.1). A `SKILL.md` nested deeper than `skills/<name>/` is *not* a
-  skill but may still be exposed by Opencode if its scan is recursive — we detect
-  and warn at registration (§5.6); we add only `skills/`, never the plugin root,
-  so nothing else outside the spec layout can leak in.
+  skill, and registration is per-skill, so it is never registered — we detect and
+  warn about the file as an authoring hint (§5.6). Only a user-authored config
+  `skills` directory is scanned recursively by the host (§9.1.5).
 - **`cwd` with `~` or absolute paths** → not allowed by the spec; treat as invalid
   server entry (§7.2.1 form requirements).
 - **Windows** → containment must use case-insensitive path comparisons on Windows;
@@ -1062,11 +1163,12 @@ Findings that adjust the design:
   `command: string[]` contract.
 - **Anonymous credentials in headers** → we pass them through (visible package
   data); spec forbids secrets, but client-side we do not inject anything.
-- **MCP server `enabled` / `timeout`** → not in the portable format; all translated
-  servers default to `enabled: true` with Opencode's default timeout. Users tune
-  these via the user-config-wins override (§5.7): define `mcp.<name>` themselves
-  (an `{ "enabled": false }` stub or a full entry) and the plugin defers; or gate
-  tools via the `tools` config as usual.
+- **MCP server `disabled` / `timeout` / `codemode`** → not in the portable
+  format; all translated servers default to enabled with Opencode's defaults
+  (Code Mode on). Users tune these via the user-config-wins override (§5.7):
+  define `mcp.servers.<name>` themselves (a `{ "disabled": true }` stub or a
+  full entry, e.g. with `codemode: false`) and the plugin defers; permissions
+  can gate `<server>_*` tools.
 - **SSH auth for git sources** → the CLI uses the ambient SSH agent/keys (its own
   config); it never embeds or stores credentials, and private repos require the
   user's normal SSH setup.
@@ -1097,17 +1199,17 @@ Findings that adjust the design:
 
 | Risk | Mitigation |
 | --- | --- |
-| `config.skills` type lag in `@opencode-ai/plugin` d.ts | Defensive normalization; runtime schema is authoritative; integration test asserts actual behavior |
-| Opencode changes to `skills.paths`/`mcp` semantics | E2E smoke test pins behavior on each release |
-| Plugin module import failures are silent | Import-safe bundle; failures logged loudly from inside hooks |
-| Opencode loads duplicate npm plugin entries only once | Single-entry + `plugins: string[]` is the only documented multi-source form (§3.1); re-verify dedup behavior per release |
-| Config hook clobbers user-authored `mcp`/`skills` entries (hook runs after config resolution) | User-config-wins precedence (§3.2, §5.7); plugin registrations never overwrite pre-existing entries |
+| V2 `Context` type surface changes | Structural `RegistrationContext` + type-only `Context` import make `pnpm typecheck` fail; E2E pins behavior per release |
+| Opencode changes to transform/registry semantics | E2E smoke test pins behavior on each release |
+| Plugin load failures | V2 reports them (`failed to load plugin`); import-safe bundle; failures logged loudly from inside `setup` |
+| Opencode deduplicates plugin entries by package identity | Single-entry + `options.plugins` is the only documented multi-source form (§3.1); re-verify dedup behavior per release |
+| Transform registrations clobber user-authored `mcp`/`skills` entries | User-config-wins precedence (§3.2, §5.6, §5.7): the MCP editor pre-check skips config servers; the host's skill registry enforces config precedence; registrations never overwrite pre-existing entries |
 | Store/config drift (hand-deleted config entries, moved store, crashed swaps) leaves orphans | Nothing auto-deleted at startup; `doctor` reports, `prune` cleans (§5.11) |
-| Skills scan depth / `<available_skills>` surface differ between docs and observed behavior | Design robust to both (§5.6 nested-SKILL.md guard); E2E pins actual behavior per release (§9.2) |
-| `plugin` config spec form changes (V2 `{package, options}` future) | Document tuple form; re-verify at each release (§9.1) |
+| Skills scan depth / `<available_skills>` surface differ between docs and observed behavior | Design robust to both (§5.6 nested-SKILL.md warning); E2E pins actual behavior per release (§9.2) |
+| V2 config spec form changes (e.g. the object entry shape) | Object form documented; E2E pins the form per release (§9.1) |
 | Path containment bypass via symlinked plugin roots | Always `realpath` before validating; containment checks run on resolved paths |
 | MCP tool-name collisions across plugins | Warn + `prefix` option |
-| Skill name collisions | Warn; Opencode dedupes by name (loader semantics unchanged) |
+| Skill name collisions | Plugin–plugin: the client errors and skips the later dir; config vs plugin: the host keeps the config skill (§9.1.5) |
 | Spec evolution (1.1.0 draft) | Canonical-identifier map (§5.9); content diff is currently a no-op |
 | Corruption of the Opencode config by the CLI | JSONC-preserving edit, re-parse before write, atomic write + backup in `backups/`, abort on conflict (§5.12.4) |
 | Supply chain: a git plugin is code that Opencode will run | Install preview lists declared stdio commands; confirm before install; record resolved commit; encourage `#ref` pins (§5.12.1) |
@@ -1123,21 +1225,21 @@ Findings that adjust the design:
 - Extract the shared core into a standalone core package (and reconsider a
   multi-package workspace, §4.2) if the client core gains consumers beyond this
   repo.
-- Hot reload: have the CLI (or a `--reload` flag) ask a running Opencode to
-  re-register plugins without a restart — requires Opencode-side plugin reload
-  support; until then restart is required (§5.12.4).
+- Programmatic reload API: ask a running Opencode to reload after
+  install/remove/update instead of relying on the config watcher (§5.12.4).
 - Signed/verified installs (e.g. recording pinned commit hashes in the config so
   `install` can be reproduced exactly; content-addressed plugin archives).
 - Fetch-in-place updates (keep `.git` in the store, `git fetch` + reset) instead of
   re-clone + export — trades the pristine-tree property of §5.3.2 for speed.
 - `extensions["com.ameshkov.opencode-agent-plugins"]` namespace so plugin authors
-  can carry Opencode-specific settings (e.g. per-server `enabled`, `timeout`,
-  `prefix`, name overrides, per-agent tool gating) inside a portable plugin.
+  can carry Opencode-specific settings (e.g. per-server `disabled`, `timeout`,
+  `codemode`, `prefix`, name overrides, per-agent tool gating) inside a portable
+  plugin.
   (User-side overrides are already covered by the user-config-wins rule, §5.7 —
   this namespace is for *author-shipped* Opencode tuning.)
 - File-based client extensions (top-level namespace directories).
 - Watch mode for path-sourced plugins (re-register on change).
-- Per-instance overrides (`enabled: false`) so users can disable a component
+- Per-instance overrides (`disabled: true`) so users can disable a component
   without editing the plugin package.
 - Repository component types when the portable spec adds them.
 

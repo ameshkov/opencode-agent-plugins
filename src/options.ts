@@ -5,14 +5,15 @@ import type { LogLevel } from './utils/index.js';
  * Plugin options known to this plugin, in their validated, normalized form.
  *
  * Mirrors the `opencode-agent-plugins` entry in the user's `opencode.json`
- * `plugin` array — see `docs/explanation/design.md` §3.1.
+ * `plugins` array (V2 `{ package, options }` form) — see
+ * `docs/explanation/design.md` §3.1.
  */
 interface ValidatedOptions {
   /** Plugin source(s): local path, git URL, or an installed plugin name. */
   plugins: string[];
   /** True to namespace MCP server names as `<plugin-name>-<server>`. */
   prefix: boolean;
-  /** Minimum severity forwarded to `client.app.log`. */
+  /** Minimum severity written to the plugin's console logger. */
   logLevel: LogLevel;
 }
 
@@ -48,7 +49,7 @@ export interface OptionsParseResult {
  * validation (the plugin is strict on known keys). A missing `plugins`
  * field or an invalid value of a known key throws.
  *
- * @param input - Raw options object from the opencode plugin tuple.
+ * @param input - Raw options object from the opencode plugin entry.
  * @returns The validated options and any warnings.
  * @throws {Error} If the options do not conform to the schema.
  */

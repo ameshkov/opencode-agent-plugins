@@ -1,32 +1,27 @@
 /**
- * JSONC-preserving editing of the OpenCode config's `plugin` array
- * (`docs/explanation/design.md` §5.11–§5.12.4).
+ * Config file resolution and safe writes (`docs/explanation/design.md`
+ * §5.11–§5.12.4).
  *
- * The CLI registers/removes plugin sources by editing only the `plugin` array
- * of the resolved config file, keeping comments and formatting everywhere
- * else intact (jsonc-parser). Writes are atomic and validated before landing,
- * with a timestamped backup left in the store's `backups/` directory — never
- * a `<config>.bak` next to the user's config.
+ * The CLI registers/removes plugin sources by editing the OpenCode config
+ * file; the JSONC-preserving array edits themselves live in
+ * `src/lib/config-edit.ts`. This module owns locating the file
+ * (`opencode.jsonc` preference), atomic writes, and backups — never a
+ * `<config>.bak` next to the user's config.
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { applyEdits, modify, parseTree, type Node } from 'jsonc-parser';
+import { parseTree, printParseErrorCode, type ParseError } from 'jsonc-parser';
 import { storeDir } from './data.js';
 import { writeFileAtomic } from './store.js';
-
-/** The plugin's config identity: the tuple's package name. */
-/** @internal Exported for tests only; not part of the public module API. */
-export const PLUGIN_TUPLE_NAME = 'opencode-agent-plugins';
 
 /** Scope of the config file to edit. */
 export type ConfigScope =
   { kind: 'project'; cwd: string } | { kind: 'global' } | { kind: 'custom'; path: string };
 
 /** Raised on any config-edit problem (conflict, unparsable, etc.). */
-/** @internal Exported for tests only; not part of the public module API. */
 export class ConfigEditError extends Error {
   constructor(message: string) {
     super(message);
@@ -99,100 +94,6 @@ export function configPreferenceNote(resolved: ResolvedConfigFile): string | nul
 }
 
 /**
- * Registers a plugin source into the `plugin` array of a config text.
- *
- * The source is appended to the `plugins` array of the existing
- * `["opencode-agent-plugins", {…}]` tuple when there is one (preserving other
- * options), otherwise a new tuple is appended/created. Already-registered
- * sources are left untouched.
- *
- * @param text - Current config text.
- * @param source - The source string to register.
- * @returns The edited config text.
- * @throws {ConfigEditError} When the config structure cannot be edited safely.
- */
-export function applyRegisterSource(text: string, source: string): string {
-  // A missing or empty config file is treated as an empty object: the design
-  // creates the config file when none exists (§5.11). Whitespace-only content
-  // is not valid JSONC, so normalize it to `{}` as well.
-  const sourceText = text.trim() === '' ? '{}' : text;
-  const root = parseTree(sourceText);
-  if (root === undefined) {
-    throw new ConfigEditError('config is not a valid JSONC document');
-  }
-  const plugin = findPluginArray(root);
-  const tupleIndex = findTupleIndex(plugin);
-  if (tupleIndex === -1) {
-    const entry = [PLUGIN_TUPLE_NAME, { plugins: [source] }];
-    if (plugin === undefined || plugin.children === undefined) {
-      return applyEdits(sourceText, modify(sourceText, ['plugin'], [entry], {}));
-    }
-    return applyEdits(
-      sourceText,
-      modify(sourceText, ['plugin', plugin.children.length], entry, {
-        isArrayInsertion: true,
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      }),
-    ) as string;
-  }
-  const tuple = plugin!.children![tupleIndex]!;
-  const options = tupleChildren(tuple)[1];
-  const existing = isObject(options)
-    ? (JSON.parse(sliceOf(sourceText, options)) as Record<string, unknown>)
-    : {};
-  const plugins = Array.isArray(existing['plugins']) ? existing['plugins'] : [];
-  const strings = plugins.filter((p): p is string => typeof p === 'string');
-  if (strings.includes(source)) {
-    return text;
-  }
-  const next: Record<string, unknown> = { ...existing, plugins: [...strings, source] };
-  const newTuple = [PLUGIN_TUPLE_NAME, next];
-  return applyEdits(sourceText, modify(sourceText, ['plugin', tupleIndex], newTuple, {})) as string;
-}
-
-/**
- * Removes a plugin source from the `plugin` array of a config text.
- *
- * When the tuple's `plugins` array becomes empty the whole tuple is removed.
- *
- * @param text - Current config text.
- * @param source - The registered source string to remove.
- * @returns The edited config text.
- * @throws {ConfigEditError} When the source is not registered.
- */
-export function applyRemoveSource(text: string, source: string): string {
-  const root = parseTree(text);
-  if (root === undefined) {
-    throw new ConfigEditError('config is not a valid JSONC document');
-  }
-  const plugin = findPluginArray(root);
-  const tupleIndex = findTupleIndex(plugin);
-  if (plugin === undefined || tupleIndex === -1) {
-    throw new ConfigEditError(`"${source}" is not registered (no plugin tuple found)`);
-  }
-  const tuple = plugin.children![tupleIndex]!;
-  const options = tupleChildren(tuple)[1];
-  if (!isObject(options)) {
-    throw new ConfigEditError(`"${source}" is not registered in the plugin options`);
-  }
-  const existing = JSON.parse(sliceOf(text, options)) as Record<string, unknown>;
-  const plugins = Array.isArray(existing['plugins']) ? existing['plugins'] : [];
-  const strings = plugins.filter((p): p is string => typeof p === 'string');
-  if (!strings.includes(source)) {
-    throw new ConfigEditError(`"${source}" is not registered`);
-  }
-  const remaining = strings.filter((s) => s !== source);
-  if (remaining.length === 0) {
-    return applyEdits(text, modify(text, ['plugin', tupleIndex], undefined, {})) as string;
-  }
-  const next: Record<string, unknown> = { ...existing, plugins: remaining };
-  return applyEdits(
-    text,
-    modify(text, ['plugin', tupleIndex], [PLUGIN_TUPLE_NAME, next], {}),
-  ) as string;
-}
-
-/**
  * Validates, backs up and atomically writes an edited config file.
  *
  * The edited text must parse as JSONC (a CLI must never leave OpenCode with a
@@ -221,8 +122,17 @@ export async function saveConfig(
   env = process.env,
   expected?: string | null,
 ): Promise<{ backupPath: string | null }> {
-  if (parseTree(newText) === undefined) {
-    throw new ConfigEditError('refusing to write config: result does not parse');
+  // Opencode parses with `allowTrailingComma: true` and rejects a document
+  // only when its parser reports errors; mirror that so a write is refused
+  // exactly when the host would refuse the config.
+  const errors: ParseError[] = [];
+  parseTree(newText, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    const first = errors[0]!;
+    throw new ConfigEditError(
+      'refusing to write config: result does not parse ' +
+        `(${printParseErrorCode(first.error)} at offset ${first.offset})`,
+    );
   }
   const previous = await readFile(path, 'utf8').catch(() => null);
   if (expected !== undefined && previous !== expected) {
@@ -244,156 +154,6 @@ export async function saveConfig(
 /** Current timestamp for backup names (filesystem-safe, UTC). */
 function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
-/** Finds the `plugin` array property of the config root (or undefined). */
-function findPluginArray(root: Node): Node | undefined {
-  if (root.type !== 'object') {
-    throw new ConfigEditError('config root must be an object');
-  }
-  const prop = childrenOf(root).find(
-    (node) =>
-      node.type === 'property' &&
-      node.children !== undefined &&
-      node.children.length >= 2 &&
-      node.children[0]!.value === 'plugin',
-  );
-  const value = prop === undefined ? undefined : prop.children![1];
-  return value !== undefined && value.type === 'array' ? value : undefined;
-}
-
-/**
- * Extracts the configured source strings from a config text (best-effort).
- *
- * For a `["opencode-agent-plugins", { "plugins": [...] }]` tuple the sources
- * are the `plugins` array entries; plain string entries and tuples without a
- * plugins array contribute nothing. Unreadable/malformed configs yield an
- * empty list.
- *
- * @param text - Config text.
- * @returns The source strings found.
- */
-export function configSourcesOf(text: string): string[] {
-  const root = parseTree(text);
-  if (root === undefined || root.type !== 'object') {
-    return [];
-  }
-  const plugin = findPluginArray(root);
-  if (plugin === undefined || plugin.children === undefined) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const element of plugin.children) {
-    if (element.type !== 'array' || !Array.isArray(element.children)) {
-      continue;
-    }
-    const options = element.children[1];
-    if (options === undefined || options.type !== 'object') {
-      continue;
-    }
-    const pluginsProp = childrenOf(options).find(
-      (node) => node.type === 'property' && node.children?.[0]?.value === 'plugins',
-    );
-    const pluginsArray = pluginsProp?.children?.[1];
-    if (pluginsArray?.type !== 'array' || pluginsArray.children === undefined) {
-      continue;
-    }
-    for (const source of pluginsArray.children) {
-      if (source.type === 'string' && typeof source.value === 'string') {
-        out.push(source.value);
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * `true` when a config text contains a `["opencode-agent-plugins", {…}]`
- * loader tuple (the entry that makes OpenCode load this package at startup).
- *
- * The CLI uses this before `install` registers a source: when the loader
- * entry is absent, registering the source alone is inert (OpenCode never
- * loads the loader plugin), so the CLI warns and offers to add the entry.
- *
- * @param text - Config text.
- * @returns `true` when the loader tuple is present.
- * @internal Exported for tests only; production callers go through
- * {@link probeConfig}. Not part of the public module API.
- */
-export function configHasPluginTuple(text: string): boolean {
-  const root = parseTree(text);
-  if (root === undefined || root.type !== 'object') {
-    return false;
-  }
-  const plugin = findPluginArray(root);
-  return plugin !== undefined && findTupleIndex(plugin) !== -1;
-}
-
-/** Result of probing the resolved config for the loader tuple (§5.11). */
-export interface ConfigProbe {
-  /** Absolute path of the resolved config file. */
-  path: string;
-  /** True when `opencode.jsonc` won over an existing `opencode.json`. */
-  jsoncWins: boolean;
-  /** True when the config contains the `["opencode-agent-plugins", {…}]` tuple. */
-  hasTuple: boolean;
-}
-
-/**
- * Resolves and reads the config for a scope without writing anything.
- *
- * The CLI probes this before `install` registers a source: when the loader
- * tuple is absent, registering the source alone would never be loaded by
- * OpenCode, so the CLI warns and asks the user first (§5.11). A missing or
- * unreadable config file reports `hasTuple: false` (the tuple cannot exist
- * there; the config is created on registration).
- *
- * @param scope - Which config to inspect.
- * @returns The resolved path plus whether the loader tuple is present.
- */
-export async function probeConfig(scope: ConfigScope): Promise<ConfigProbe> {
-  const resolved = await resolveConfigFile(scope);
-  const text = await readFile(resolved.path, 'utf8').catch(() => null);
-  return {
-    path: resolved.path,
-    jsoncWins: resolved.jsoncWins,
-    hasTuple: text === null ? false : configHasPluginTuple(text),
-  };
-}
-
-/** Finds the position of the plugin tuple in the array (or -1). */
-function findTupleIndex(plugin: Node | undefined): number {
-  if (plugin === undefined || plugin.children === undefined) {
-    return -1;
-  }
-  return plugin.children.findIndex(
-    (element) => isTuple(element) && tupleChildren(element)[0]?.value === PLUGIN_TUPLE_NAME,
-  );
-}
-
-/** Checks whether an array element is the `[name, options]` tuple shape. */
-function isTuple(node: Node): boolean {
-  return node.type === 'array' && node.children !== undefined && node.children.length >= 1;
-}
-
-/** Returns the top-level element nodes of an array node. */
-function tupleChildren(node: Node): Node[] {
-  return node.children ?? [];
-}
-
-/** Checks whether a node is an object node. */
-function isObject(node: Node | undefined): node is Node {
-  return node !== undefined && node.type === 'object';
-}
-
-/** Returns the child nodes of a node. */
-function childrenOf(node: Node): Node[] {
-  return node.children ?? [];
-}
-
-/** Extracts the underlying text of a node from the source. */
-function sliceOf(text: string, node: Node): string {
-  return text.slice(node.offset, node.offset + node.length);
 }
 
 /**

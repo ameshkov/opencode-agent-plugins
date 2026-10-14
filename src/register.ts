@@ -1,14 +1,14 @@
 /**
  * Registration pipeline for the plugin entry (`docs/explanation/design.md` §5.1–§5.8).
  *
- * Everything from source resolution to config mutation happens here. The
- * entry point (`index.ts`) is a thin bootstrap: these functions talk to the
- * opencode `Config` shape and the structured logger, so they live in this
- * module rather than in the opencode-free `src/lib/`. MCP and skills
- * registration are split out into `register-mcp.ts`/`register-skills.ts`.
+ * Everything from source resolution to component registration happens here.
+ * The entry point (`index.ts`) is a thin bootstrap: these functions talk to
+ * the V2 plugin context domains (skills, MCP) and the structured logger, so
+ * they live in this module rather than in the opencode-free `src/lib/`. MCP
+ * and skills registration are split out into
+ * `register-mcp.ts`/`register-skills.ts`.
  */
 
-import type { PluginInput } from '@opencode-ai/plugin';
 import { failure, reportFailure } from './lib/errors.js';
 import { resolveSource } from './lib/resolve.js';
 import { loadManifest, type ManifestData } from './lib/manifest.js';
@@ -19,22 +19,20 @@ import { registerMcpServers } from './register-mcp.js';
 import { registerSkills } from './register-skills.js';
 import type { Logger } from './utils/index.js';
 import type { OptionsParseResult } from './options.js';
-import type { RegisterState, RuntimeConfig } from './register-types.js';
+import type { RegisterState, RegistrationContext } from './register-types.js';
 
 /**
- * Registers the configured agent plugins onto the opencode config.
+ * Registers the configured agent plugins through the V2 plugin context.
  *
- * @param config - opencode's live resolved config, mutated in place.
+ * @param context - The V2 plugin context (skills + MCP domains and location).
  * @param parsed - The parsed plugin options, or undefined when parsing
  * failed (the failure is logged by the entry point).
  * @param logger - Plugin logger.
- * @param input - Plugin input (for the workspace directory).
  */
 export async function registerAgentPlugins(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   parsed: OptionsParseResult | undefined,
   logger: Logger,
-  input: PluginInput,
 ): Promise<void> {
   if (parsed === undefined) {
     return;
@@ -42,18 +40,17 @@ export async function registerAgentPlugins(
   for (const warning of parsed.warnings) {
     await logger.warn(warning);
   }
-  config.skills ??= { paths: [] };
 
   const state: RegisterState = {
     registeredMcp: new Set(),
-    registeredSkillsPaths: new Set(),
+    registeredSkillNames: new Set(),
     seenRoots: new Set(),
   };
   let skillCount = 0;
   let localCount = 0;
   let remoteCount = 0;
   for (const source of parsed.options.plugins) {
-    const outcome = await registerSource(config, source, parsed, state, logger, input.directory);
+    const outcome = await registerSource(context, source, parsed, state, logger);
     skillCount += outcome.skills;
     localCount += outcome.local;
     remoteCount += outcome.remote;
@@ -73,31 +70,22 @@ export async function registerAgentPlugins(
  * error must never abort the remaining plugins, so it is reported as a
  * `source-missing` failure and the run continues with an empty outcome.
  *
- * @param config - opencode's live resolved config, mutated in place.
+ * @param context - The V2 plugin context.
  * @param source - The configured plugin source string.
  * @param parsed - The parsed plugin options.
- * @param state - Registration state for this hook run.
+ * @param state - Registration state for this setup run.
  * @param logger - Plugin logger.
- * @param workspaceDir - Workspace directory (for relative-path sources).
  * @returns The plugin's registration outcome.
  */
 async function registerSource(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   source: string,
   parsed: OptionsParseResult,
   state: RegisterState,
   logger: Logger,
-  workspaceDir: string,
 ): Promise<PluginOutcome> {
   try {
-    return await registerConfiguredSource(
-      config,
-      source,
-      parsed.options.prefix,
-      state,
-      logger,
-      workspaceDir,
-    );
+    return await registerConfiguredSource(context, source, parsed.options.prefix, state, logger);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await reportFailure(
@@ -113,14 +101,13 @@ async function registerSource(
 
 /** Resolves a single configured source and registers its components. */
 async function registerConfiguredSource(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   source: string,
   prefix: boolean,
   state: RegisterState,
   logger: Logger,
-  workspaceDir: string,
 ): Promise<PluginOutcome> {
-  const result = await resolveSource(source, workspaceDir);
+  const result = await resolveSource(source, context.location.directory);
   if (!result.ok) {
     await reportFailure(result.failure, logger, { source });
     return { skills: 0, local: 0, remote: 0 };
@@ -137,7 +124,7 @@ async function registerConfiguredSource(
   }
   state.seenRoots.add(root);
   const slug = result.source.kind === 'git' ? result.source.source.slug : undefined;
-  return registerPlugin(config, result.source.kind, root, prefix, state, logger, slug);
+  return registerPlugin(context, result.source.kind, root, prefix, state, logger, slug);
 }
 
 /** Counters of one plugin registration. */
@@ -152,7 +139,7 @@ interface PluginOutcome {
  * taxonomy (narrowest unit dropped first, failures logged, never thrown).
  */
 async function registerPlugin(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   kind: 'path' | 'git',
   root: string,
   prefix: boolean,
@@ -166,18 +153,11 @@ async function registerPlugin(
   }
   const { manifest, skillResult, mcpResult } = loaded;
   let skillCount = 0;
-  if (skillResult.root !== null) {
-    skillCount = await registerSkills(
-      config,
-      skillResult.root,
-      skillResult.skills.map((s) => s.name),
-      manifest.name,
-      state,
-      logger,
-    );
+  if (skillResult.skills.length > 0) {
+    skillCount = await registerSkills(context, skillResult.skills, manifest.name, state, logger);
   }
   const { local, remote } = await registerMcpOf(
-    config,
+    context,
     kind,
     root,
     prefix,
@@ -200,11 +180,11 @@ async function registerPlugin(
 /**
  * Registers the plugin's MCP servers and creates `PLUGIN_DATA` for local ones.
  *
- * @param config - opencode's live resolved config, mutated in place.
+ * @param context - The V2 plugin context.
  * @param kind - Source kind (path or git).
  * @param root - The plugin's absolute root directory.
  * @param prefix - When true, prefix MCP server names.
- * @param state - Registration state for this hook run.
+ * @param state - Registration state for this setup run.
  * @param logger - Plugin logger.
  * @param slug - Store slug for git-sourced plugins, or undefined.
  * @param manifest - The validated plugin manifest.
@@ -212,7 +192,7 @@ async function registerPlugin(
  * @returns Local/remote counters of the registered servers.
  */
 async function registerMcpOf(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   kind: 'path' | 'git',
   root: string,
   prefix: boolean,
@@ -232,7 +212,7 @@ async function registerMcpOf(
       ),
     );
   }
-  return registerMcpServers(config, manifest.name, mcpResult.servers, prefix, state, logger);
+  return registerMcpServers(context, manifest.name, mcpResult.servers, prefix, state, logger);
 }
 
 /** Validates the plugin package and reports its non-fatal findings. */

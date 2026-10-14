@@ -6,11 +6,12 @@
  * the container's layout, not the host's.
  */
 
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** Release under test; overridable, must match the @opencode-ai/plugin pin. */
-export const OPENCODE_VERSION = process.env['OPENCODE_VERSION'] ?? '1.18.30';
+/** Release under test; overridable, must match the @opencode/plugin pin. */
+export const OPENCODE_VERSION = process.env['OPENCODE_VERSION'] ?? '2.0.16';
 
 /** Image name shared by the build and the per-test containers. */
 export const IMAGE_NAME = `opencode-agent-plugins-e2e:${OPENCODE_VERSION}`;
@@ -21,11 +22,21 @@ export const IMAGE_CACHE_FILE = join(tmpdir(), 'opencode-agent-plugins-e2e-image
 /** Port `opencode serve` listens on inside the container. */
 export const API_PORT = 4096;
 
+/** Plugin id the loader registers under (V2 plugin id). */
+export const PLUGIN_ID = 'opencode-agent-plugins';
+
+/**
+ * Basic-auth password the container's `opencode serve` starts with.
+ *
+ * Generated per run so no credential lives in the repository (AGENTS.md,
+ * "Secrets and API keys"); `E2E_SERVER_PASSWORD` overrides it for
+ * deterministic runs. The scenario passes it to the container as
+ * `E2E_SERVER_PASSWORD` and uses it for the host-side client.
+ */
+export const SERVER_PASSWORD = process.env['E2E_SERVER_PASSWORD'] ?? randomUUID();
+
 /** Port of the fake OpenAI-compatible model server (in-container). */
 export const FAKE_MODEL_PORT = 8787;
-
-/** Port of the remote streamable-http MCP fixture server (in-container). */
-export const REMOTE_MCP_PORT = 3999;
 
 /** Plugin name/values the assertions use (see fixtures + §5.7–§5.8). */
 export const PLUGIN_ROOT = '/app/fixtures/my-plugin';
@@ -57,8 +68,12 @@ export const GIT_SUBDIR_BETA_SLUG = `${GIT_FIXTURE_SLUG}-packages-beta-01bea2ef`
 export const GIT_FIXTURE_WORK = '/app/git-fixtures/work';
 export const FIXTURES_DIR = '/app/fixtures';
 
-/** The fixture's MCP tool names as opencode exposes them (server_tool). */
-export const TOOL_ECHO = 'echo_echo_ping';
-export const TOOL_REMOTE = 'http_ping';
-export const TOOL_REDIRECT = 'redirect_ping';
-export const TOOL_PATH = 'pathtool_ping';
+/**
+ * V2 exposes MCP tools through Code Mode by default, so the e2e drives them
+ * with an `execute` tool call whose code invokes the tool by its Code Mode
+ * path (`tools.<server>.<tool>`, normalized server name).
+ */
+export const CODE_ECHO = "return await tools.echo.echo_ping({ message: 'hello from e2e' })";
+export const CODE_REMOTE = "return await tools.http.ping({ message: 'hello from e2e' })";
+export const CODE_REDIRECT = "return await tools.redirect.ping({ message: 'hello from e2e' })";
+export const CODE_PATH = "return await tools.pathtool.ping({ message: 'hello from e2e' })";

@@ -80,11 +80,11 @@ export interface PluginReport {
   storeRoot?: string;
   /** Structured tree scan (validation + unsupported-construct findings). */
   scan?: ScanResult;
-  /** `GET /config` response (registration evidence). */
+  /** V2 `config.get` response (registration evidence). */
   config?: unknown;
-  /** `GET /mcp` response (connection status per server). */
+  /** V2 `mcp.list` response (connection status per server). */
   mcpEndpoint?: unknown;
-  /** Skill names from `GET /skill` (host discovery). */
+  /** Skill names from V2 `skill.list` (host discovery). */
   skillEndpoint?: string[];
   /** Tool names the provider request advertised (MCP discovery). */
   providerTools?: string[];

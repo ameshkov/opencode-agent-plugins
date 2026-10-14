@@ -9,13 +9,8 @@
  */
 
 import { readFile, rm } from 'node:fs/promises';
-import {
-  applyRemoveSource,
-  configError,
-  configPreferenceNote,
-  resolveConfigFile,
-  saveConfig,
-} from './config-file.js';
+import { configError, configPreferenceNote, resolveConfigFile, saveConfig } from './config-file.js';
+import { applyRemoveSource } from './config-edit.js';
 import { dataDirForKey } from './data.js';
 import {
   findStoreEntry,

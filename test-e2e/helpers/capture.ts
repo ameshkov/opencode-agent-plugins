@@ -7,6 +7,7 @@
  * suites decide what to assert.
  */
 
+import type { SessionMessageInfo } from '@opencode/client';
 import { expect } from 'vitest';
 
 /** Shape of the OpenAI chat-completions request the fake server captures. */
@@ -26,16 +27,26 @@ export interface Capture {
   request: ChatCompletionRequest;
 }
 
-/** Result of driving one session (`POST /session/{id}/message`). */
+/** Result of driving one V2 session (`create` → `prompt` → `wait`). */
 export interface SessionRun {
   /** Base URL of the opencode server. */
   baseUrl: string;
-  /** Response of the prompt POST. */
-  prompt: { info: { role: string }; parts: Array<{ type: string; text?: string }> };
+  /** The session's messages after it went idle (`session.context`). */
+  messages: SessionMessageInfo[];
   /** Every captured model request, in order (this session only). */
   captures: Capture[];
   /** Raw container output (for failure messages). */
   output: string;
+}
+
+/**
+ * Whether the session produced an assistant message (the turn completed).
+ *
+ * @param messages - Session messages from `session.context`.
+ * @returns True when an assistant message is present.
+ */
+export function assistantReplied(messages: readonly SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === 'assistant');
 }
 
 /**

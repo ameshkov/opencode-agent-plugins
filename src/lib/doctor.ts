@@ -10,7 +10,8 @@
 
 import { readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { resolveConfigFile, configSourcesOf, type ConfigScope } from './config-file.js';
+import { configSourcesOf } from './config-edit.js';
+import { resolveConfigFile, type ConfigScope } from './config-file.js';
 import { dataKeyForPath, storeDir } from './data.js';
 import { listInstalled, removeMeta, type StoreEntry } from './store.js';
 import { parseSource, type ParsedSource } from './resolve.js';

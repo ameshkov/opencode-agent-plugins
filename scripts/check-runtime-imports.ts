@@ -1,14 +1,15 @@
 // Enforces the project's zero-runtime-imports invariant on the compiled
 // output: no compiled module (`build/**`, including the CLI) may import (or
-// re-export from) the type-only SDK packages (`@opencode-ai/plugin`,
-// `@opencode-ai/sdk`).
+// re-export from) the type-only OpenCode packages (`@opencode/plugin` for V2
+// and the legacy `@opencode-ai/*` names).
 //
 // These packages are devDependencies used only for types and are erased by
 // `tsc` when imported via `import type`. A leaked *value* import surviving
 // into `build/` breaks the published plugin at runtime when loaded from npm
-// (where the SDK packages are not installed): Node throws
-// `ERR_MODULE_NOT_FOUND` during module import — before the plugin's `config`
-// hook ever runs, leaving no diagnostic in the log. See AGENTS.md
+// (where the OpenCode packages are not installed): Node throws
+// `ERR_MODULE_NOT_FOUND` during module import — before the plugin's `setup`
+// ever runs, so the plugin's own logger never reports it; the only trace is
+// OpenCode's generic `failed to load plugin` warning. See AGENTS.md
 // ("Dependency Management") for the full rationale.
 //
 // An optional first CLI argument overrides the build directory so the script
@@ -26,16 +27,16 @@ const root = join(here, '..');
 const override = process.argv[2];
 const buildDir = override ? resolve(override) : join(root, 'build');
 
-// Matches a runtime (non-erased) reference to any `@opencode-ai/*` package:
-//   - `import ... from '@opencode-ai/...'`
-//   - `export ... from '@opencode-ai/...'`
-//   - side-effect `import '@opencode-ai/...'`
-//   - dynamic `import('@opencode-ai/...')`
+// Matches a runtime (non-erased) reference to any OpenCode package:
+//   - `import ... from '@opencode/...'` / `'@opencode-ai/...'`
+//   - `export ... from '@opencode/...'`
+//   - side-effect `import '@opencode/...'`
+//   - dynamic `import('@opencode/...')`
 // `import type` is erased by `tsc` and never appears in `build/`, so any
 // match here is a leaked value import. Comments are stripped before scanning
 // (see `stripComments`) so prose mentions of these packages in JSDoc do not
 // produce false positives.
-const SDK_IMPORT_RE = /\b(?:from|import)\s*\(?\s*['"]@opencode-ai\//;
+const SDK_IMPORT_RE = /\b(?:from|import)\s*\(?\s*['"]@opencode(?:-ai)?\//;
 
 /**
  * Neutralise `//` line comments and `/* ... *&#47;` block comments in compiled
@@ -99,15 +100,15 @@ for (const file of collectJs(buildDir)) {
 }
 
 if (offenders.length > 0) {
-  console.error('check-runtime-imports: leaked @opencode-ai runtime import(s) in build/:');
+  console.error('check-runtime-imports: leaked OpenCode runtime import(s) in build/:');
   for (const { file, line, text } of offenders) {
     console.error(`  ${file}:${line}: ${text}`);
   }
   console.error('');
-  console.error('The @opencode-ai/plugin and @opencode-ai/sdk packages are devDependencies');
-  console.error('(type-only). Use `import type { ... }` so tsc erases them; a surviving');
-  console.error('value import breaks the published plugin at module-load time.');
+  console.error('The @opencode/plugin (V2) and legacy @opencode-ai/* packages are');
+  console.error('devDependencies (type-only). Use `import type { ... }` so tsc erases them;');
+  console.error('a surviving value import breaks the published plugin at module-load time.');
   process.exit(1);
 }
 
-console.log('check-runtime-imports: no @opencode-ai runtime imports in build/');
+console.log('check-runtime-imports: no OpenCode runtime imports in build/');

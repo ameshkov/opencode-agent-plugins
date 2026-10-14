@@ -38,7 +38,7 @@ pnpm install
 ```
 
 No environment variables or `.env` files are required for local
-development. The `@opencode-ai/plugin` package is type-only and erased by
+development. The `@opencode/plugin` package is type-only and erased by
 the compiler, so the compiled `build/` is self-contained.
 
 ## Development Workflow
@@ -56,8 +56,8 @@ All commands run through pnpm scripts defined in
 
 - `pnpm install` — install pinned dependencies.
 - `pnpm build` — compile TypeScript to `build/` (`tsc`), then verify no
-  `@opencode-ai/*` runtime imports leaked into `build/` (the package is a
-  type-only devDependency).
+  OpenCode runtime imports leaked into `build/` (the packages are type-only
+  devDependencies).
 - `pnpm typecheck` — type-check production *and* test code (no emit for
   the test graph).
 - `pnpm test` — run the Vitest suite once.
@@ -94,19 +94,21 @@ hook needs `pnpm` on PATH; install Husky's git hooks once with
 ### Debugging with opencode
 
 The plugin is *not* a standalone process. opencode imports the compiled
-module, calls its default `Plugin` function, and invokes the `config`
-hook at startup. Debugging therefore means: build the plugin, point a
-scratch opencode project at it, start opencode with verbose logging, and
-inspect the logs.
+module and calls its default `{ id, setup }` definition; `setup` registers
+skills and MCP servers through the plugin context transforms. Debugging
+therefore means: build the plugin, point a scratch opencode project at it,
+start opencode with verbose logging, and inspect the logs.
 
 #### How the plugin loads
 
 Two facts shape every debugging workflow:
 
-1. opencode loads plugins **once at startup**. Any rebuild requires
-   restarting opencode to pick up the change.
+1. opencode V2 watches config directories and the loaded plugin's files and
+   reloads the loader plugin, so a rebuild or config change is picked up on
+   the next location load. A restart is still the deterministic way to
+   reload after a rebuild.
 2. The compiled output in `build/` is self-contained. The
-   `@opencode-ai/plugin` imports are type-only and erased by `tsc`, so the
+   `@opencode/plugin` imports are type-only and erased by `tsc`, so the
    only runtime imports are the plugin's own relative modules. You can
    drop `build/` anywhere opencode can resolve it.
 
@@ -123,40 +125,11 @@ mkdir -p ../opencode-plugin-tester && cd ../opencode-plugin-tester
 
 Pick one of the two methods below.
 
-**Method 1 — reference the local package (recommended).** This respects
-the `exports`/`main` field in `package.json`, so opencode resolves
-`build/index.js` automatically:
-
-```sh
-cat > opencode.json <<EOF
-{
-  "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["file://$(cd ../opencode-agent-plugins && pwd)"]
-}
-EOF
-```
-
-> [!NOTE]
-> `opencode.json` is the project config and lives at the **project
-> root**, not under `.opencode/`. The unquoted heredoc (`<<EOF`) lets
-> `$(cd ...)` expand to the absolute repo path, while the `\$schema`
-> escape keeps the JSON key literal.
-
-opencode installs plugins listed in the `plugin` array at startup and
-caches them under its cache directory (`~/.cache/opencode/` on macOS/
-Linux). Use the `file:///` form (three slashes): empty host followed by
-the absolute path.
-
-> **Note:** the `file:` specifier is not documented in opencode's
-> official config schema, which only shows npm package names. It has
-> been verified to work against opencode 1.18.x; behavior may differ on
-> other versions. If it stops working, fall back to Method 2.
-
-**Method 2 — thin loader in the plugin directory.** Local plugins are
-loaded directly from `.opencode/plugins/`, and *each file* there is
-treated as a separate plugin module. Because `build/` contains several
-`index.js` files, do not copy the whole tree — instead add a single
-loader that re-exports the compiled entry:
+**Method 1 — thin loader in `.opencode/plugins/` (recommended for V2).**
+V2 auto-discovers direct `.ts`/`.js` files under `.opencode/plugins/`, and
+each file is loaded as its own plugin module. Because `build/` contains
+several `index.js` files, do not copy the whole tree — add a single loader
+that re-exports the compiled entry:
 
 ```sh
 mkdir -p .opencode/plugins
@@ -168,7 +141,35 @@ mkdir -p .opencode/plugins
 export { default } from '/absolute/path/to/opencode-agent-plugins/build/index.js';
 ```
 
-Either way, rebuild before each restart:
+An auto-discovered loader file takes no plugin options; to pass options,
+configure the loader as a directory entry instead (Method 2).
+
+**Method 2 — directory entry.** A configured local entry must be a plugin
+*directory*; V2 2.0.16 resolves `<dir>/server.js` for directory targets, so
+create that shim in the repo root first:
+
+```sh
+printf "export { default } from './build/index.js';\n" > server.js
+```
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "file:///absolute/path/to/opencode-agent-plugins",
+      "options": { "plugins": ["./agent-plugins/my-plugin"] }
+    }
+  ]
+}
+```
+
+> **Note:** a configured local *file* path is rejected by V2
+> ("configured plugin path must be a directory"); use Method 1 for a single
+> file, or a directory with the `server.js` shim. npm-name entries resolve
+> through the package `main` instead.
+
+Rebuild before reloading:
 
 ```sh
 pnpm build      # in the opencode-agent-plugins repo
@@ -183,8 +184,9 @@ pnpm build      # in the opencode-agent-plugins repo
    ```
 
 2. In another terminal inside the scratch project, choose how you want
-   to observe logs. `--log-level DEBUG` enables the plugin's
-   `logger.debug(...)` calls in `src/utils/logger.ts`.
+   to observe logs. Set `"logLevel": "debug"` in the plugin entry to
+   enable the plugin's `logger.debug(...)` calls in `src/utils/logger.ts`;
+   `--log-level DEBUG` raises OpenCode's own log level.
 
    - **Captured to a file** (recommended for plugin debugging). Run
      opencode non-interactively and redirect the log stream into the
@@ -197,8 +199,9 @@ pnpm build      # in the opencode-agent-plugins repo
        "list your tools" 2>./opencode.log
      ```
 
-     All plugin output goes through `client.app.log(...)` (see
-     `src/utils/logger.ts`), tagged with `service: 'opencode-agent-plugins'`.
+     All plugin output goes through the plugin's console logger (see
+     `src/utils/logger.ts`), tagged with the `[opencode-agent-plugins]`
+     prefix.
 
    - **Interactive TUI**. Start opencode normally, then tail the
      on-disk log in a third terminal. `--print-logs` does **not** work
@@ -214,29 +217,34 @@ pnpm build      # in the opencode-agent-plugins repo
    plugin in the scratch project's `opencode.json` (see README), start
    opencode, and inspect the log lines for each configured plugin source.
 
-4. **Restart opencode** to reload the plugin after each rebuild.
-   Plugins are only read at startup; there is no hot reload.
+4. **Reload opencode** after each rebuild. V2 watches the loader plugin's
+   files and reloads it on the next location load, but a restart is the
+   deterministic way to be sure the new `build/` is what runs.
 
-Do **not** use `console.log` for diagnostics: it is not captured by
-opencode's log pipeline and will not appear in the log files. Add
-temporary calls through the existing `Logger` instead.
+Keep diagnostics in the plugin's `Logger` (`src/utils/logger.ts`): it writes
+`[opencode-agent-plugins]`-prefixed console lines that opencode captures in
+`--print-logs`, with level filtering and structured metadata.
 
 #### Unit debugging without opencode
 
 Most behavior can be debugged faster in Vitest than through opencode.
-The suite in `src/*.test.ts` exercises the plugin against a stub SDK
-client (`test/stub-client.ts`) that records every `client.app.log`
-call, so no running server is needed.
+The suite in `src/*.test.ts` exercises the plugin against a stub V2 context
+(`test/stub-context.ts`) that records every transform registration and log
+entry, so no running server is needed.
 
 ```sh
 pnpm test:watch
 ```
 
-To inspect the effect of the `config` hook directly, reuse the pattern
-from `src/index.test.ts`: call the plugin with a `stubClient()`, invoke
-the returned `hooks.config(config)` with a plain `Config` object, and
-assert on the mutated `config.skills` / `config.mcp` maps. To debug
-interactively, run Vitest with an inspector:
+To inspect registration directly, reuse the pattern from
+`src/register.test.ts`: build a `stubContext()`, call
+`registerAgentPlugins(stub.context, parsed, stub.logger)`, and assert on the
+stub's `registeredSkills` / `registeredMcp` maps (the stub editor mirrors the
+real one: edits build on the baseline and earlier registrations; for skills
+the baseline models other plugins' registrations only — config skills are
+invisible to transforms, §9.1.5 — while for MCP it also models config-defined
+servers, which are visible). To debug interactively, run Vitest with an
+inspector:
 
 ```sh
 pnpm exec vitest --inspect-brk
@@ -284,37 +292,38 @@ Notes:
 ### E2E Tests (Docker)
 
 The e2e suite in [`test-e2e/`](./test-e2e) is the release gate from
-`docs/explanation/design.md` §9.1/§9.2.4: it boots a **real opencode
+`docs/explanation/design.md` §9.1/§9.2.4: it boots a **real opencode V2
 binary** and the fixture plugin package inside a container and asserts the
-config hook's registration actually reaches the model request.
+plugin's transform registrations actually reach the model request.
 
 Everything opencode-related runs in Docker — no opencode is installed on
 the host:
 
-- `test-e2e/Dockerfile` builds an image with the pinned
-  `opencode-ai@<version>` CLI, the plugin compiled from this repo
-  (`build/`), the fixture plugin (skill + stdio MCP server), and a fake
+- `test-e2e/Dockerfile` builds an image with the pinned `@opencode/cli`
+  release, the plugin compiled from this repo (`build/`), the fixture
+  plugins (skills + stdio/remote MCP servers), and a fake
   OpenAI-compatible model server that captures every chat-completions
   request.
-- `test-e2e/agent-plugins.e2e.test.ts` drives the scenario with
+- The scenario files drive the container through
   [Testcontainers](https://testcontainers.com/) (`testcontainers` npm
-  package): it builds the image, starts `opencode serve` inside the
-  container with its port published, and **connects to the opencode server
-  API from the host** — creates a session and sends a prompt through
-  `POST /session/{id}/message`. The fake model's first completion emits a
-  tool call to the plugin's MCP server, so opencode executes it; the test
-  then asserts on the executed tool result (`PLUGIN_ROOT` / `PLUGIN_DATA` /
-  `cwd` / the eagerly created data dir), on the tool definition in the
-  captured request, on the `hello` skill in `<available_skills>`, and on
-  the pinned per-release skills scan depth (the fixture contains a stray
-  nested `SKILL.md` on purpose). The same assertions run against the
-  `static` baseline — the config-hook values written directly into
-  `opencode.json`.
+  package): the image is built once, `opencode serve` runs inside the
+  container with its port published and a per-run
+  `OPENCODE_SERVER_PASSWORD` (generated unless `E2E_SERVER_PASSWORD` is set),
+  and the tests connect through the V2 client
+  (`@opencode/client`) with HTTP Basic auth. A session is created with
+  `session.create`, prompted with `session.prompt`, and awaited with
+  `session.wait`. The fake model's first completion emits an `execute`
+  tool call (V2 wraps MCP tools in Code Mode by default), so opencode runs
+  the plugin's MCP server; the tests then assert on the executed tool
+  result (`PLUGIN_ROOT` / `PLUGIN_DATA` / `cwd` / the eagerly created data
+  dir), on the `hello` skill in `<available_skills>`, and on the pinned
+  per-release behavior (the fixture contains a stray nested `SKILL.md` on
+  purpose). The same assertions run against the `static` baseline — the
+  equivalent native V2 config written directly into `opencode.json`.
 - `test-e2e/bootstrap.mjs` is the container entrypoint (no shell in the
   image): it writes the opencode config for the mode, starts the fake model
   server in-process, and spawns `opencode serve` with its port published.
-  The test connects to the server API and reads the `CAPTURE:` lines the
-  fake model prints; `run-scenario.sh` no longer exists.
+  The tests read the `CAPTURE:` lines the fake model prints.
 
 Run it (requires a working Docker engine):
 
@@ -324,14 +333,14 @@ pnpm test:e2e
 ```
 
 The opencode release under test comes from `OPENCODE_VERSION` (default:
-the `@opencode-ai/plugin` pin in `package.json`). The e2e suite is
+the `@opencode/plugin` pin in `package.json`). The e2e suite is
 excluded from `pnpm test` / `pnpm check`; it runs under its own
 `vitest.test-e2e.config.ts`.
 
 ## Continuous Integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push
-to `main`/`master`, on `v*` tags, and on pull requests, with three jobs:
+to `main`/`master`, on `v*` tags, and on pull requests, with four jobs:
 
 - **ci** — the full local gate (`pnpm check`: format, lint, typecheck,
   unit tests), on Ubuntu.
@@ -350,25 +359,33 @@ to `main`/`master`, on `v*` tags, and on pull requests, with three jobs:
 
 Common issues and their fixes:
 
-- **Plugin logs are empty even with `--log-level DEBUG`.** You are
-  almost certainly in the TUI, where `--print-logs` is swallowed and
-  logs only land on disk. Tail the on-disk log file instead
-  (`~/.local/share/opencode/log/opencode.log`).
+- **Plugin logs are missing.** In the TUI, `--print-logs` is swallowed and
+  logs only land on disk; tail the on-disk log file instead
+  (`~/.local/share/opencode/log/opencode.log`). With `opencode serve
+  --print-logs`, the plugin's `[opencode-agent-plugins]` console lines
+  appear in the stream.
 
-- **`console.log` output never appears.** opencode does not capture
-  `console.log`. Route diagnostics through the plugin's `Logger`
-  (`src/utils/logger.ts`), which writes via `client.app.log(...)`.
+- **A local plugin entry does not load.** V2 logs a warning ("configured
+  plugin path must be a directory") for a configured local *file* path and,
+  for directory targets, resolves `<dir>/server.js` (2.0.16) — use the
+  `.opencode/plugins/` loader file or add the `server.js` shim described in
+  [Load the plugin from a scratch project](#load-the-plugin-from-a-scratch-project).
+
+- **MCP tools are missing from the provider's tool list.** V2 wraps MCP
+  tools in Code Mode by default; they are callable as
+  `tools.<server>.<tool>` inside `execute`. Pre-define the server with
+  `codemode: false` to expose them natively (user config wins).
 
 - **Pre-commit hook fails because pnpm is not found.** Husky runs the
   hook in a stripped environment; make sure the hook is executable
   (`chmod +x .husky/pre-commit`) and that `pnpm` is on PATH when
   committing (or install corepack shims).
 
-- **`file://` plugin loading stops working.** The `file:` specifier for
-  plugins is not in opencode's official config schema and has only been
-  verified against opencode 1.18.x. If it breaks on a newer opencode,
-  fall back to Method 2 (thin loader in `.opencode/plugins/`) described
-  in [Load the plugin from a scratch project](#load-the-plugin-from-a-scratch-project).
+- **`file://` plugin loading stops working.** A configured directory entry
+  depends on V2's local-plugin resolution (2.0.16 needs `<dir>/server.js`);
+  if it breaks on a newer opencode, fall back to Method 1 (thin loader in
+  `.opencode/plugins/`) described in
+  [Load the plugin from a scratch project](#load-the-plugin-from-a-scratch-project).
 
 - **TypeScript resolves Node built-ins (`node:url`) with errors in the
   editor but `pnpm typecheck` passes.** The editor is keying off the

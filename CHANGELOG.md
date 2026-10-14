@@ -8,6 +8,50 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the plugin to the OpenCode V2 plugin API: the entry is now a
+  `{ id, setup }` definition that registers skills through
+  `ctx.skill.transform` and MCP servers through `ctx.mcp.transform`, and the
+  config entry is `{ "package": "opencode-agent-plugins", "options": { … } }`
+  in the `plugins` array.
+- The plugin is verified against OpenCode 2.0.16 (`@opencode/plugin` and
+  `@opencode/client`); the e2e image installs `@opencode/cli@2.0.16` and
+  drives the V2 server API with Basic auth.
+- Skill registration now adds each validated skill individually (id, name,
+  description, absolute `SKILL.md` path, content) instead of adding the
+  plugin's `skills/` directory to `config.skills.paths`.
+- MCP registration writes native V2 server entries (`disabled`/`timeout`
+  semantics) and leaves the host's Code Mode default untouched, so plugin
+  servers behave exactly like natively-configured ones.
+- Plugin diagnostics are written as `[opencode-agent-plugins]` console lines,
+  captured by `opencode serve --print-logs`, because V2's plugin context
+  exposes no logging API.
+- The CLI edits the `plugins` array and its `{ package, options }` entry
+  (still JSONC-preserving) and migrates a legacy V1
+  `["opencode-agent-plugins", {…}]` tuple (sources and other options merged
+  into the entry) on the next install write.
+- The CLI's loader-entry bootstrap accepts either the V2 entry or a legacy
+  tuple and notes the migration when the legacy form is found.
+- OpenCode's config watcher reloads the plugin after CLI changes; the CLI
+  still prints the restart hint as the deterministic path.
+
+### Removed
+
+- Support for OpenCode 1.x plugin implementations: V1 plugins do not run in
+  OpenCode 2, so the package no longer targets the V1 `config` hook or the
+  `["opencode-agent-plugins", {…}]` config tuple (existing configs are
+  migrated on write).
+
+### Fixed
+
+- A stray nested `SKILL.md` can no longer be exposed through plugin
+  registration: V2 registers skills individually, so only validated
+  immediate children are ever registered. Discovery still warns about the
+  file as an authoring hint.
+- The nested-`SKILL.md` discovery warning no longer fires for every valid
+  skill on Windows: the depth check splits paths on both separators.
+
 ## [0.1.0] - 2026-09-16
 
 ### Added

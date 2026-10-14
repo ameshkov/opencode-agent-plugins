@@ -1,19 +1,28 @@
 /**
  * MCP server registration for the plugin entry (`docs/explanation/design.md` §5.7).
  *
- * Translates validated `McpServerSpec`s into opencode `config.mcp` entries,
+ * Registers validated `McpServerSpec`s through a V2 `ctx.mcp.transform`,
  * applying name sanitization and the user-config-wins collision rule. Lives
- * in `src/` (not `src/lib/`) because it talks to the opencode `Config`
- * shape; the `src/lib/mcp.ts` discovery half stays opencode-free.
+ * in `src/` (not `src/lib/`) because it talks to the V2 plugin context; the
+ * `src/lib/mcp.ts` discovery half stays opencode-free.
+ *
+ * Collision detection runs inside the transform callback because V2 replays
+ * transforms during a batched registry rebuild: the editor is the
+ * authoritative view of config-defined and earlier plugin servers, and the
+ * callback may run after `transform()` resolves. Counters are therefore
+ * *attempted* registrations; collisions are reported separately from the
+ * callback.
  */
 
-import { isValidServerName, sanitizeServerName, type McpServerSpec } from './lib/mcp.js';
+import {
+  isValidServerName,
+  sanitizeServerName,
+  type McpConfigLike,
+  type McpServerSpec,
+} from './lib/mcp.js';
 import { failure, reportFailure } from './lib/errors.js';
 import type { Logger } from './utils/index.js';
-import type { RegisterState, RuntimeConfig } from './register-types.js';
-
-/** A single registered MCP server (runtime schema, superset of SDK type). */
-type RuntimeMcpEntry = Record<string, unknown> & { type: string };
+import type { RegisterState, RegistrationContext } from './register-types.js';
 
 /** Registration outcome of a plugin's MCP servers. */
 export interface McpOutcome {
@@ -21,27 +30,71 @@ export interface McpOutcome {
   remote: number;
 }
 
+/** A server ready to register, with its effective (possibly prefixed) name. */
+interface RegistrableServer {
+  name: string;
+  spec: McpServerSpec;
+}
+
 /**
  * Registers the plugin's MCP servers with collision handling + prefixing.
  *
- * @param config - opencode's live resolved config, mutated in place.
+ * @param context - The V2 plugin context (MCP domain).
  * @param pluginName - Plugin name (for reports and prefixed names).
  * @param specs - Validated MCP server specs from discovery.
  * @param prefix - When true, register as `<plugin>-<server>` instead.
  * @param state - Registration state (MCP names registered this run).
  * @param logger - Plugin logger.
- * @returns Local/remote counters of the registered servers.
+ * @returns Local/remote counters of the attempted registrations.
  */
 export async function registerMcpServers(
-  config: RuntimeConfig,
+  context: RegistrationContext,
   pluginName: string,
   specs: McpServerSpec[],
   prefix: boolean,
   state: RegisterState,
   logger: Logger,
 ): Promise<McpOutcome> {
-  let local = 0;
-  let remote = 0;
+  const registrable = await collectRegistrable(pluginName, specs, prefix, logger);
+  if (registrable.length === 0) {
+    return { local: 0, remote: 0 };
+  }
+  await context.mcp.transform((editor) => {
+    for (const { name, spec } of registrable) {
+      if (editor.get(name) !== undefined) {
+        // Fire-and-forget: the callback may replay after setup returns and
+        // the logger never rejects.
+        void reportCollision(name, spec, pluginName, state, logger);
+        continue;
+      }
+      const config: McpConfigLike | undefined = spec.config;
+      if (config === undefined) {
+        // Discovery only yields local/remote specs, which always carry a config.
+        continue;
+      }
+      editor.set(name, config);
+      state.registeredMcp.add(name);
+    }
+  });
+  return countOutcome(registrable);
+}
+
+/**
+ * Filters the specs down to registrable servers, reporting invalid names.
+ *
+ * @param pluginName - Plugin name (for reports and prefixed names).
+ * @param specs - Validated MCP server specs from discovery.
+ * @param prefix - When true, register as `<plugin>-<server>` instead.
+ * @param logger - Plugin logger.
+ * @returns The servers that may be registered.
+ */
+async function collectRegistrable(
+  pluginName: string,
+  specs: McpServerSpec[],
+  prefix: boolean,
+  logger: Logger,
+): Promise<RegistrableServer[]> {
+  const registrable: RegistrableServer[] = [];
   for (const spec of specs) {
     const name = prefixedName(pluginName, spec, prefix);
     if (name === null) {
@@ -56,14 +109,21 @@ export async function registerMcpServers(
       );
       continue;
     }
-    if (config.mcp?.[name] !== undefined) {
-      await reportCollision(name, spec, pluginName, state, logger);
-      continue;
-    }
-    config.mcp ??= {};
-    (config.mcp as Record<string, RuntimeMcpEntry>)[name] =
-      spec.config as unknown as RuntimeMcpEntry;
-    state.registeredMcp.add(name);
+    registrable.push({ name, spec });
+  }
+  return registrable;
+}
+
+/**
+ * Counts the local/remote servers that were attempted.
+ *
+ * @param registrable - Servers that passed name validation.
+ * @returns The local/remote counters.
+ */
+function countOutcome(registrable: RegistrableServer[]): McpOutcome {
+  let local = 0;
+  let remote = 0;
+  for (const { spec } of registrable) {
     if (spec.kind === 'local') {
       local += 1;
     } else {

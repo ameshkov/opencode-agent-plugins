@@ -6,6 +6,10 @@
  * bare-command PATH search. The design states these are asserted in E2E, not
  * unit tests (§5.7, §7); this suite is the tripwire.
  *
+ * V2 wraps MCP tools in Code Mode by default, so callability is probed with
+ * `execute` calls (`tools.http.ping`, `tools.redirect.ping`,
+ * `tools.pathtool.ping`).
+ *
  * Fixture: `test-e2e/fixtures/remote-plugin` (a streamable-http server on
  * 127.0.0.1:3999 started by bootstrap.mjs in `remote` mode) exposes:
  *
@@ -24,14 +28,18 @@
 import { describe, expect, it } from 'vitest';
 import { imageTag } from './helpers/image.js';
 import { withScenario } from './helpers/scenario-run.js';
-import { mainRequestOf, toolResultTextOf, toolRoundTripOf, toolsOf } from './helpers/capture.js';
 import {
+  assistantReplied,
+  mainRequestOf,
+  toolResultTextOf,
+  toolRoundTripOf,
+} from './helpers/capture.js';
+import {
+  CODE_PATH,
+  CODE_REDIRECT,
+  CODE_REMOTE,
   FIXTURES_DIR,
   OPENCODE_VERSION,
-  REMOTE_MCP_PORT,
-  TOOL_PATH,
-  TOOL_REDIRECT,
-  TOOL_REMOTE,
 } from './helpers/constants.js';
 
 describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
@@ -41,13 +49,13 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(
         await imageTag(),
         'remote',
-        { emitToolCall: TOOL_REMOTE },
+        { emitToolCall: 'execute', emitToolCode: CODE_REMOTE },
         async (scenario) => {
           const result = await scenario.session();
 
           // The remote server was registered and actually called.
           const roundTrip = toolRoundTripOf(result.captures);
-          expect(roundTrip.call, 'opencode must call http_ping').toBe(true);
+          expect(roundTrip.call, 'opencode must call the execute tool').toBe(true);
           expect(roundTrip.result, 'the remote tool result must reach the model').toBe(true);
           const resultText = toolResultTextOf(result.captures);
           expect(resultText).toContain('pong hello from e2e');
@@ -62,22 +70,18 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
           // because the rule is owned by the client, not reimplemented by us.
           expect(resultText).toContain('R_UA=plugin-ua');
 
-          // The main request lists the remote tool and the PATH-resolved
-          // stdio server; the sse / badurl entries produced nothing.
-          const tools = toolsOf(mainRequestOf(result.captures).request);
-          expect(tools.has(TOOL_REMOTE), 'http_ping must be registered').toBe(true);
-          expect(tools.has(TOOL_PATH), 'pathtool_ping (bare command) must be registered').toBe(
-            true,
-          );
-          for (const name of tools.keys()) {
-            expect(name.startsWith('sse_'), `sse entry must be skipped (found ${name})`).toBe(
-              false,
-            );
-            expect(name.startsWith('badurl_'), `badurl entry must be skipped (found ${name})`).toBe(
+          // The host registry lists the valid servers; the sse / badurl
+          // entries produced nothing.
+          const names = (await scenario.mcpList()).data.map((server) => server.name);
+          expect(names, 'http must be registered').toContain('http');
+          expect(names, 'pathtool (bare command) must be registered').toContain('pathtool');
+          for (const name of names) {
+            expect(name.includes('sse'), `sse entry must be skipped (found ${name})`).toBe(false);
+            expect(name.includes('badurl'), `badurl entry must be skipped (found ${name})`).toBe(
               false,
             );
           }
-          expect(result.prompt.info.role).toBe('assistant');
+          expect(assistantReplied(result.messages)).toBe(true);
         },
       );
     },
@@ -90,12 +94,12 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(
         await imageTag(),
         'remote',
-        { emitToolCall: TOOL_PATH },
+        { emitToolCall: 'execute', emitToolCode: CODE_PATH },
         async (scenario) => {
           const result = await scenario.session();
 
           const roundTrip = toolRoundTripOf(result.captures);
-          expect(roundTrip.call, 'opencode must call pathtool_ping').toBe(true);
+          expect(roundTrip.call, 'opencode must call the execute tool').toBe(true);
           expect(roundTrip.result, 'the PATH-resolved tool result must reach the model').toBe(true);
           const resultText = toolResultTextOf(result.captures);
           expect(resultText).toContain('pong hello from e2e');
@@ -103,7 +107,7 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
           expect(resultText).toContain(`PLUGIN_ROOT=${FIXTURES_DIR}/remote-plugin`);
           // cwd defaults to the plugin root (spec default honored).
           expect(resultText).toContain(`CWD=${FIXTURES_DIR}/remote-plugin`);
-          expect(result.prompt.info.role).toBe('assistant');
+          expect(assistantReplied(result.messages)).toBe(true);
         },
       );
     },
@@ -116,12 +120,12 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(
         await imageTag(),
         'remote',
-        { emitToolCall: TOOL_REDIRECT },
+        { emitToolCall: 'execute', emitToolCode: CODE_REDIRECT },
         async (scenario) => {
           const result = await scenario.session();
 
           const roundTrip = toolRoundTripOf(result.captures);
-          expect(roundTrip.call, 'opencode must call redirect_ping').toBe(true);
+          expect(roundTrip.call, 'opencode must call the execute tool').toBe(true);
           expect(roundTrip.result, 'the redirected tool result must reach the model').toBe(true);
           const resultText = toolResultTextOf(result.captures);
           expect(resultText).toContain('pong hello from e2e');
@@ -144,7 +148,7 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
             remoteLines.some((line) => line.includes('"path":"/mcp-final"')),
             'a request must arrive at the redirect target',
           ).toBe(true);
-          expect(result.prompt.info.role).toBe('assistant');
+          expect(assistantReplied(result.messages)).toBe(true);
         },
       );
     },
@@ -156,17 +160,19 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
     async () => {
       await withScenario(await imageTag(), 'remote', {}, async (scenario) => {
         // No tool call is emitted: the assertion is that the session still
-        // completes and never lists the invalid entries.
+        // completes and never registers the invalid entries.
         const result = await scenario.session();
-        const tools = toolsOf(mainRequestOf(result.captures).request);
-        expect(tools.has(TOOL_REMOTE), 'the valid remote server still loads').toBe(true);
-        for (const name of tools.keys()) {
-          expect(name.startsWith('sse_'), `sse entry must be skipped (found ${name})`).toBe(false);
-          expect(name.startsWith('badurl_'), `badurl entry must be skipped (found ${name})`).toBe(
+        const main = mainRequestOf(result.captures);
+        expect(main).toBeDefined();
+        const names = (await scenario.mcpList()).data.map((server) => server.name);
+        expect(names, 'the valid remote server still loads').toContain('http');
+        for (const name of names) {
+          expect(name.includes('sse'), `sse entry must be skipped (found ${name})`).toBe(false);
+          expect(name.includes('badurl'), `badurl entry must be skipped (found ${name})`).toBe(
             false,
           );
         }
-        expect(result.prompt.info.role).toBe('assistant');
+        expect(assistantReplied(result.messages)).toBe(true);
       });
     },
     10 * 60 * 1000,

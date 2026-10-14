@@ -12,6 +12,8 @@
  *   completion returns a tool call for it (so opencode executes the MCP
  *   server and the test can assert on the resulting tool round trip);
  *   subsequent completions return plain text so the agent loop terminates.
+ *   For `EMIT_TOOL_CALL=execute`, `EMIT_TOOL_CODE` carries the Code Mode code
+ *   to run (the V2 default wraps MCP tools in Code Mode).
  *
  * Exported for the container bootstrap (`bootstrap.mjs`); may also be run
  * directly for local debugging.
@@ -49,6 +51,7 @@ export function startFakeModel(options = {}) {
   const captureFile =
     options.captureFile ?? process.env['CAPTURE_FILE'] ?? '/app/out/requests.jsonl';
   const emitToolCall = options.emitToolCall ?? process.env['EMIT_TOOL_CALL'] ?? '';
+  const emitToolCode = options.emitToolCode ?? process.env['EMIT_TOOL_CODE'] ?? '';
   mkdirSync(dirname(captureFile), { recursive: true });
 
   let toolCallEmitted = false;
@@ -81,7 +84,9 @@ export function startFakeModel(options = {}) {
       type: 'function',
       function: {
         name: emitToolCall,
-        arguments: JSON.stringify({ message: 'hello from e2e' }),
+        arguments: JSON.stringify(
+          emitToolCall === 'execute' ? { code: emitToolCode } : { message: 'hello from e2e' },
+        ),
       },
     };
   }

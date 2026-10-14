@@ -14,11 +14,12 @@
  * 3. starts the fake OpenAI-compatible model server in-process
  *    (`fake-model-server.mjs`) and, for `remote` mode, the streamable-http
  *    MCP fixture server;
- * 4. spawns `opencode serve` (published port 4096, hostname 0.0.0.0) with
- *    stdio inherited; `HOME` is the container environment's
- *    `/app/opencode-home` (the CLI execs share it, so the store paths
- *    resolve identically), and `/app/path-bin` is prepended to PATH for the
- *    bare-command fixture server;
+ * 4. spawns `opencode serve` (published port 4096, hostname 0.0.0.0, with
+ *    `OPENCODE_SERVER_PASSWORD` read from the `E2E_SERVER_PASSWORD` env the
+ *    harness generates per run) with stdio inherited;
+ *    `HOME` is the container environment's `/app/opencode-home` (the CLI
+ *    execs share it, so the store paths resolve identically), and
+ *    `/app/path-bin` is prepended to PATH for the bare-command fixture server;
  * 5. stays alive as PID 1 until opencode exits.
  *
  * The vitest host connects to the opencode server API and asserts on the
@@ -115,6 +116,13 @@ if (NEEDS_REMOTE_SERVER.has(mode)) {
 }
 await mkdir('/app/opencode-home', { recursive: true });
 
+// The harness generates the password per run and passes it through the
+// container env; without it the server and the host-side client cannot agree.
+const serverPassword = process.env['E2E_SERVER_PASSWORD'];
+if (serverPassword === undefined) {
+  throw new Error('E2E_SERVER_PASSWORD is not set');
+}
+
 const opencode = spawn(
   'opencode',
   ['serve', '--print-logs', '--port', '4096', '--hostname', '0.0.0.0'],
@@ -124,6 +132,8 @@ const opencode = spawn(
     env: {
       ...process.env,
       HOME: '/app/opencode-home',
+      // V2 requires HTTP Basic auth on the server API.
+      OPENCODE_SERVER_PASSWORD: serverPassword,
       PATH: `/app/path-bin:${process.env['PATH'] ?? ''}`,
     },
   },

@@ -26,25 +26,27 @@ const SKILL_NAME_MAX = 64;
 const SKILL_DESCRIPTION_MAX = 1024;
 
 /** A discovered, validated skill. */
-interface SkillInfo {
+export interface SkillInfo {
   /** Skill name, equal to the directory name in `skills/`. */
   name: string;
   /** Absolute path of the skill directory. */
   dir: string;
   /** Skill description from the frontmatter. */
   description: string;
+  /** Absolute path of the skill's `SKILL.md` file. */
+  skillMd: string;
+  /** Raw `SKILL.md` content (registered verbatim in V2). */
+  content: string;
 }
 
 /** Result of scanning a plugin's `skills/` directory. */
 export interface SkillDiscovery {
   /** True when the plugin has no `skills/` directory (valid absence). */
   missing: boolean;
-  /** Valid skills found (each to be exposed via the skills dir). */
+  /** Valid skills found (each to be registered individually). */
   skills: SkillInfo[];
   /** Non-fatal failures: invalid skills and nested `SKILL.md` warnings. */
   failures: Failure[];
-  /** Absolute `skills/` dir to register, or null when nothing valid. */
-  root: string | null;
 }
 
 /**
@@ -59,14 +61,13 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
   const skillsRoot = join(pluginRoot, 'skills');
   const sk = await stat(skillsRoot).catch(() => null);
   if (sk === null) {
-    return { missing: true, skills: [], failures: [], root: null };
+    return { missing: true, skills: [], failures: [] };
   }
   if (!sk.isDirectory()) {
     return {
       missing: false,
       skills: [],
       failures: [failure('skills-invalid', `skills path ${skillsRoot} is not a directory`)],
-      root: null,
     };
   }
   // Realpath containment (§5.5): the plugin root resolves once and is reused
@@ -74,16 +75,16 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
   const resolvedRoot = await realpath(pluginRoot).catch(() => null);
   const escape = await skillsEscapeFailure(resolvedRoot, skillsRoot);
   if (escape !== null) {
-    return { missing: false, skills: [], failures: [escape], root: null };
+    return { missing: false, skills: [], failures: [escape] };
   }
 
   const failureList: Failure[] = [];
   const collected = await collectValidSkills(skillsRoot, resolvedRoot, failureList);
   if (collected.escaped) {
-    // Registration is directory-granular (§5.6): Opencode scans the whole
-    // `skills/` dir, so one escaping subdirectory poisons the registration
-    // for all of it — none of the skills may be registered.
-    return { missing: false, skills: [], failures: failureList, root: null };
+    // Registration stays directory-granular on the client side (§5.6): one
+    // escaping subdirectory disables the plugin's whole `skills/` dir, so
+    // none of the skills may be registered.
+    return { missing: false, skills: [], failures: failureList };
   }
 
   failureList.push(...(await findNestedSkillFiles(skillsRoot)));
@@ -92,7 +93,6 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
     missing: false,
     skills: collected.skills,
     failures: failureList,
-    root: collected.skills.length > 0 ? skillsRoot : null,
   };
 }
 
@@ -158,7 +158,7 @@ async function collectValidSkills(
  *
  * The `skills/` path must resolve (realpath) inside the plugin root — a
  * symlinked `skills/` entry pointing outside the tree would otherwise result
- * in an external directory being registered into `config.skills.paths`.
+ * in an external directory's contents being registered as plugin skills.
  *
  * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
  * could not be resolved (the check then fails open).
@@ -240,7 +240,7 @@ async function validateSkill(name: string, skillMd: string): Promise<SkillInfo |
   if (description.length > SKILL_DESCRIPTION_MAX) {
     return null;
   }
-  return { name, dir: dirname(skillMd), description };
+  return { name, dir: dirname(skillMd), description, skillMd, content: source };
 }
 
 /** @internal Exported for tests only; not part of the public module API. */
@@ -249,36 +249,28 @@ export function isValidSkillName(name: string): boolean {
 }
 
 /**
- * Collects the skill names exposed by a skills directory (best-effort).
+ * Whether a `SKILL.md` path relative to `skills/` is a top-level skill file
+ * (`<name>/SKILL.md`, exactly two path segments).
  *
- * Used at registration time to detect skill-name collisions against
- * already-present `config.skills.paths` entries (design §5.6): a pre-existing
- * path that is unreadable simply contributes no names.
+ * Splits on both separators, so a Windows-style relative path (`hello\SKILL.md`)
+ * is classified the same as a POSIX one — `path.relative` returns platform
+ * separators, and the depth check must not depend on the host OS.
  *
- * @param skillsRoot - Absolute directory that Opencode scans for skills.
- * @returns The skill names found (directory names of immediate children with
- * `SKILL.md`), or [] on I/O errors.
+ * @param rel - Path relative to the `skills/` directory.
+ * @returns True for an immediate child's `SKILL.md`.
+ * @internal Exported for tests only; not part of the public module API.
  */
-export async function collectSkillNames(skillsRoot: string): Promise<string[]> {
-  const entries = await readdir(skillsRoot).catch(() => [] as string[]);
-  const names: string[] = [];
-  for (const entry of entries) {
-    const md = join(skillsRoot, entry, 'SKILL.md');
-    const file = await stat(md).catch(() => null);
-    if (file !== null && file.isFile()) {
-      names.push(entry);
-    }
-  }
-  return names;
+export function isTopLevelSkillMd(rel: string): boolean {
+  return rel.split(/[\\/]/).length === 2;
 }
 
 /**
  * Finds `SKILL.md` files nested deeper than `skills/<name>/SKILL.md`.
  *
- * The spec defines skills as immediate children only. If the host scans
- * `skills.paths` recursively, a stray nested file would be exposed without
- * ever having been validated — almost always an authoring mistake — so we
- * warn loudly (naming the file).
+ * The spec defines skills as immediate children only. V2 registration exposes
+ * skills individually (id + content), so a nested file is never registered;
+ * it is almost always an authoring mistake, so we still warn (naming the
+ * file) without implying the host would expose it.
  *
  * @param skillsRoot - Absolute `skills/` directory.
  * @returns Warnings naming each nested `SKILL.md`.
@@ -295,13 +287,13 @@ async function findNestedSkillFiles(skillsRoot: string): Promise<Failure[]> {
         pending.push(full);
       } else if (entry.isFile() && entry.name === 'SKILL.md') {
         const rel = relative(skillsRoot, full);
-        const parts = rel.split('/');
-        if (parts.length !== 2) {
+        if (!isTopLevelSkillMd(rel)) {
           nested.push(
-            failure('skills-nested', `nested SKILL.md ${rel}; the host may still expose it`, {
-              file: rel,
-              section: '§5.6',
-            }),
+            failure(
+              'skills-nested',
+              `nested SKILL.md ${rel}; skills are registered individually, so it is ignored`,
+              { file: rel, section: '§5.6' },
+            ),
           );
         }
       }
