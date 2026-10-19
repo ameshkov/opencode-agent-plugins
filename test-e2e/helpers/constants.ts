@@ -29,7 +29,7 @@ export const PLUGIN_ID = 'opencode-agent-plugins';
  * Basic-auth password the container's `opencode serve` starts with.
  *
  * Generated per run so no credential lives in the repository (AGENTS.md,
- * "Secrets and API keys"); `E2E_SERVER_PASSWORD` overrides it for
+ * Code Quality); `E2E_SERVER_PASSWORD` overrides it for
  * deterministic runs. The scenario passes it to the container as
  * `E2E_SERVER_PASSWORD` and uses it for the host-side client.
  */

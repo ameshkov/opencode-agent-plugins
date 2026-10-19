@@ -46,7 +46,8 @@ Each entry in `plugins` is one of:
   are picked up on the next OpenCode location load. Install one with
   `npx opencode-agent-plugins install ./agent-plugins/my-plugin`.
 - **Git URL** — `https://...`, `git+https://...`, `ssh://...`,
-  `git+ssh://...`, or the scp-like `git@host:path` form, with an optional
+  `git+ssh://...`, `file://...` (local repositories), or the scp-like
+  `git@host:path` form, with an optional
   `#fragment`: a `#ref` pin (`#v1.2.0`, `#main`, `#<commit-sha>`), a
   monorepo subpath (`#v1.2.0:packages/linter`, `#:apps/research`), or both.
   Without a `#ref`, the remote's `HEAD` at install time is used. Each

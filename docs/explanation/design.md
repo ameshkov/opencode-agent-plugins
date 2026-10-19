@@ -223,7 +223,10 @@ location load without a restart (§9.1.6).
   `codemode: false` (user config wins) or gate `<server>_*` through permissions.
 - Diagnostics: `[opencode-agent-plugins]`-prefixed console lines, captured by
   `opencode serve --print-logs`; `opencode debug config` shows the config state
-  (transform registrations live in the registry, not in the config).
+  (transform registrations live in the registry, not in the config). The
+  `opencode mcp list` command lists *configured* servers only — plugin
+  registrations are registry entries, visible through the server API
+  (`mcp.list`), not through that command.
 
 ---
 
@@ -301,9 +304,9 @@ entrypoints, both thin wrappers over the shared core:
 {
   "name": "opencode-agent-plugins",
   "type": "module",
-  "main": "./build/index.js",              // entrypoint 1: opencode plugin
-  "exports": { ".": "./build/index.js" },
-  "bin": { "opencode-agent-plugins": "./build/cli/index.js" },  // entrypoint 2
+  "main": "build/index.js",                // entrypoint 1: opencode plugin
+  "exports": { ".": { "import": "./build/index.js" } },
+  "bin": { "opencode-agent-plugins": "build/cli/index.js" },  // entrypoint 2
   "files": ["build"]
 }
 ```
@@ -394,7 +397,7 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 
 ```text
 <source>   := <local-path> | <git-url>["#"<fragment>]
-<git-url>  := https://... | git+https://... | ssh://... | git+ssh://... | git@host:path (scp-like)
+<git-url>  := https://... | git+https://... | ssh://... | git+ssh://... | git@host:path (scp-like) | file://...
 <fragment> := <ref> | [<ref>]":"<subdir>
 <ref>      := <branch> | <tag> | <commit-sha>   (Git ref names cannot contain ":")
 <subdir>   := <segment>("/"<segment>)*          (no empty, "." or ".." segment)
@@ -406,7 +409,8 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
   on the next location load (§5.12.4; a restart remains the deterministic path);
   this is the developer workflow. A local path always points at the
   plugin root itself; it carries no fragment.
-- **Git URL** — https or ssh, with an optional `#fragment`: a ref pin
+- **Git URL** — https, ssh, or a local `file://` remote (used for test
+  fixtures), with an optional `#fragment`: a ref pin
   (`#v1.2.0`, `#main`, `#<sha>`), a subpath selection
   (`#v1.2.0:packages/plugin`, `#:packages/plugin`), or both (§5.3.4). Recognized
   by scheme prefixes or the scp-like `user@host:path` form; a leading `git+` is
@@ -457,8 +461,8 @@ set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
 4. `fs.realpath()` the plugin root; all containment checks run against the
    realpath-resolved root (handles symlinks deterministically).
 
-Future sources (explicit enum in the parser, not implemented in v1): `file://`
-URLs, npm package names.
+Future sources (explicit enum in the parser, not implemented in v1): npm
+package names.
 
 #### 5.3.4 Monorepo subpath selection
 
@@ -520,9 +524,10 @@ https://github.com/org/monorepo.git#:apps/research      # HEAD + subdir
 - **Schemas vendored, never fetched** (§5.2: "Clients MUST NOT retrieve a schema
   while loading a plugin"). The two JSON schemas are committed under
   the schemas directory, copied into `build/` by the build, and loaded at
-  runtime via `createRequire` (never fetched); the dev-only schema-sync script
-  verifies their hashes against `agent-plugins.org/schemas/1.0.0/...` in CI
-  (dev-time only; runtime is offline).
+  runtime via `createRequire` (never fetched); the dev-only schema-sync
+  script (`node scripts/update-schemas.ts`, run manually) re-downloads them
+  from `agent-plugins.org/schemas/1.0.0/...` and asserts the closedness
+  below (runtime stays offline).
 - Validated with Ajv. The vendored schemas are verified to actually encode
   closedness (`additionalProperties: false` / `unevaluatedProperties: false`) —
   the report-and-ignore reclassification below is meaningless against an open
@@ -730,9 +735,9 @@ plugin, so install-time validation is byte-identical to what the plugin will do.
 | Command | What it does |
 | --- | --- |
 | `install <source> [--ref <ref>] [--global \| --config <path>] [--yes] [--dry-run] [--no-register]` | Fetches the source (§5.12.1), validates it, previews components, asks for confirmation, registers it in the Opencode config |
-| `remove <name>` `[--keep-data] [--yes]` | Unregisters from Opencode config and deletes the store entry **and** its `PLUGIN_DATA` |
+| `remove <name> [--keep-data] [--yes] [--dry-run]` | Unregisters from Opencode config and deletes the store entry **and** its `PLUGIN_DATA` |
 | `check [<name>…]` | Read-only update check (network) — resolves the configured ref remotely and compares with the recorded commit; no names = all |
-| `update [<name>…] [--yes] [--force]` | Applies available updates (staging → validate → atomic swap, §5.12.3); `--force` follows a moved tag |
+| `update [<name>…] [--yes] [--force] [--dry-run]` | Applies available updates (staging → validate → atomic swap, §5.12.3); `--force` follows a moved tag, `--dry-run` prints the plan without writing |
 | `list` | Shows installed plugins: source kind, URL/ref/subdir, resolved commit, manifest version, status (current / update available / pinned) |
 | `doctor` | Read-only health report: config entries with no store entry, store entries referenced by no config, orphaned `PLUGIN_DATA` dirs, stale `.old-*` swap leftovers, stale name segments in data-dir keys |
 | `prune [--yes]` | Removes what `doctor` lists as orphaned/stale (never anything referenced by a config entry) |
@@ -978,7 +983,7 @@ Map to the [client implementers checklist](https://agent-plugins.org/client-impl
 | Enforce cwd containment + remote URL/header requirements | §5.5, §5.7 | unit tests |
 | Continue loading after an independent MCP server fails | §6, §5.7 | unit tests |
 | Require matching versions in `plugin.json`/`mcp.json` | §5.9 | fixtures |
-| Never reassign published canonical schema ids | §5.4 (vendored, hash-checked) | CI script |
+| Never reassign published canonical schema ids | §5.4 (vendored, never fetched) | schema-sync script (manual) |
 | Allow older versions per local compatibility policy | §5.9 | — |
 
 **Delegated-to-host requirements.** Three spec duties are implemented by Opencode's
@@ -1011,9 +1016,10 @@ these, the E2E test (§9.2) is the tripwire.
 
 ### 9.1 Empirical verification (proven, 2026-09-24, opencode 2.0.16)
 
-The E2E suite (§9.2.4) was re-run against opencode 2.0.16 in full
-(5 scenario files, 22 assertions) and passes. The V1-era findings were first
-established on opencode 1.18.25/1.18.30; the list below is the V2 result.
+The E2E suite (§9.2.4) was re-run against opencode 2.0.16 in full (the
+five hermetic scenario files, plus the opt-in top-plugins suite) and
+passes. The V1-era findings were first established on opencode
+1.18.25/1.18.30; the list below is the V2 result.
 
 The core mechanism is **empirically proven** end-to-end: the loader plugin is
 loaded as `{ package: "/app/plugin", options: { plugins: "<dir>" } }` (and, for
@@ -1115,7 +1121,7 @@ Findings that adjust the design:
    context (`test/stub-context.ts`); assert the transform registrations and
    `PLUGIN_DATA` creation.
 3. **CLI tests**: install/update/remove flows against local git fixtures (a bare
-   repo exercised via a `file://` path or a local `git://`/ssh test remote):
+   repo exercised via a `file://` path):
    - install validates before registering, preview lists components, `--dry-run`
      writes nothing;
    - update detects drift, swaps atomically, preserves `PLUGIN_DATA`, refuses a
@@ -1133,8 +1139,10 @@ Findings that adjust the design:
    regressions in the integration itself (import-safety note §5.1, scan
    depth, `<available_skills>` surface, host-delegated conformance items §7), so
    it is a release gate, not an optional extra.
-5. **Schema provenance test**: dev script asserts the vendored schemas match
-   `agent-plugins.org/schemas/1.0.0/*` byte-for-byte (CI only).
+5. **Schema provenance script**: the dev-only
+   `scripts/update-schemas.ts` re-downloads the canonical schemas, asserts
+   each encodes closedness, and rewrites `src/schemas/` only when the bytes
+   changed (run manually; never in CI).
 6. **Real-world plugin suite (opt-in)**: `E2E_TOP_PLUGINS=1` installs the
    top-ranked published Agent Plugins into clean containers and records the
    install preview, a validation-pipeline tree scan, host-side registration
@@ -1221,7 +1229,7 @@ Findings that adjust the design:
 
 ## 12. Future work
 
-- npm registry / `file://` sources.
+- npm registry sources.
 - Extract the shared core into a standalone core package (and reconsider a
   multi-package workspace, §4.2) if the client core gains consumers beyond this
   repo.

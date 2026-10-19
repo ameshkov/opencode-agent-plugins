@@ -2,373 +2,309 @@
 
 This file provides guidance to AI agents working on this codebase.
 
-## Project
+## Table of Contents
 
-`opencode-agent-plugins` — an Agent Plugins client for OpenCode. It loads
-Agent Plugins packages (a directory with `plugin.json`, optionally `skills/`
-and `mcp.json`), validates them against the
-[Agent Plugins specification](https://agent-plugins.org/specification) v1.0.0,
-and registers their skills and MCP servers into OpenCode. The same npm
-package also exposes a CLI that manages the plugin store and the user's
-OpenCode config.
+- [Project Overview](#project-overview)
+- [Technical Context](#technical-context)
+- [Project Structure](#project-structure)
+- [Build And Test Commands](#build-and-test-commands)
+- [Contribution Instructions](#contribution-instructions)
+- [Code Guidelines](#code-guidelines)
+    - [System Design](#system-design)
+    - [Architecture](#architecture)
+    - [Code Quality](#code-quality)
+    - [Testing](#testing)
+    - [Dependency Management](#dependency-management)
+    - [Configuration & Documentation](#configuration--documentation)
+    - [Other](#other)
+
+## Project Overview
+
+`opencode-agent-plugins` is an Agent Plugins client for OpenCode. It loads
+Agent Plugins packages (a directory with `plugin.json`, optionally
+`skills/` and `mcp.json`), validates them against the
+[Agent Plugins specification](https://agent-plugins.org/specification)
+v1.0.0, and registers their skills and MCP servers into OpenCode. The same
+npm package also exposes a CLI that manages the plugin store and the
+user's OpenCode config.
 
 The authoritative design is
 [`docs/explanation/design.md`](./docs/explanation/design.md) — read the
 relevant section before implementing or changing a component. Behavior
-described there (failure taxonomy, containment rules, placeholder expansion,
-options schema) must match the code; when they diverge, the design is the
-contract and the code must be fixed.
+described there (failure taxonomy, containment rules, placeholder
+expansion, options schema) must match the code; when they diverge, the
+design is the contract and the code must be fixed.
+
+## Technical Context
+
+- **Language/Version**: TypeScript 7.0.2 (strict, ESM,
+  `module: Node16`), compiled with `tsc` to `build/`; no bundler.
+- **Primary Dependencies**: `ajv` (schema validation), `zod` (options
+  parsing), `jsonc-parser` (config edits); `@opencode/plugin` and
+  `@opencode/client` are type-only devDependencies.
+- **Storage**: the filesystem — the client store under
+  `<data-home>/opencode/agent-plugins/` and the user's OpenCode config
+  (see the [configuration reference](./docs/reference/configuration.md)).
+- **Testing**: Vitest 4 for unit tests; Testcontainers plus a real
+  OpenCode binary in Docker for e2e tests.
+- **Target Platform**: the OpenCode host process (plugin entry) and
+  Node.js >= 26 (CLI entry).
+- **Project Type**: CLI tool + library — one npm package with two entry
+  points.
+- **Performance Goals**: N/A — startup must stay fast and offline.
+- **Constraints**: no network access at startup; the compiled `build/`
+  must keep zero runtime `@opencode/*` imports; the plugin must never
+  throw during load.
+- **Scale/Scope**: one OpenCode location with a handful of configured
+  sources; the CLI manages a single user's store and config.
 
 ## Project Structure
 
 ```text
 opencode-agent-plugins/
 ├── src/
-│   ├── index.ts            # opencode V2 plugin entry: plain { id, setup } definition
+│   ├── index.ts            # OpenCode V2 plugin entry: plain { id, setup } definition
 │   ├── options.ts          # Zod schema for the plugin options object
 │   ├── register.ts         # plugin pipeline: resolve → validate → register
-│   │                         (V2 setup logic; talks to the plugin context domains)
 │   ├── register-mcp.ts     # MCP registration: sanitize, collide-skip, ctx.mcp.transform
 │   ├── register-skills.ts  # skills registration: collide-skip, ctx.skill.transform adds
-│   ├── register-types.ts   # shared RegistrationContext/RegisterState for the register-* modules
-│   ├── cli/                # opencode-agent-plugins binary: entry, flag parsing, prompts,
-│   │                         output, install/remove/update/inspect commands
-│   ├── lib/                # shared core — no @opencode/* runtime deps
-│   │                         (per docs/explanation/design.md §4.1); one module per concern:
-│   │   ├── resolve.ts      # source parsing (path | git URL [#fragment]) + store lookup
-│   │   ├── git.ts          # git availability, ls-remote, ref resolution
-│   │   ├── clone.ts        # clone strategy: shallow-first staging at resolved ref
-│   │   ├── install.ts      # install operations (git staging + swap + config edit)
-│   │   ├── remove.ts       # remove operations (unregister + store/PLUGIN_DATA delete)
-│   │   ├── update.ts       # check/update lifecycle (staging → derive → swap)
-│   │   ├── update-status.ts # check/update status records + failure classification
-│   │   ├── config-file.ts  # config path resolution, safe writes, backups
-│   │   ├── config-edit.ts  # JSONC-preserving edits of the `plugins` entry (+ legacy tuple)
-│   │   ├── config-tree.ts  # jsonc-parser node accessors for the plugin arrays
-│   │   ├── store.ts        # store layout, metadata read/write (meta/<slug>.json)
-│   │   ├── manifest.ts     # plugin.json validation (Ajv, vendored schema)
-│   │   ├── mcp.ts          # mcp.json validation + translation to opencode config
-│   │   ├── skills.ts       # skill discovery + validation
-│   │   ├── frontmatter.ts  # minimal YAML frontmatter parser for SKILL.md
-│   │   ├── paths.ts        # containment + ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion
-│   │   ├── data.ts         # PLUGIN_DATA layout + creation
-│   │   ├── remote.ts       # remote URL/header rule checks (§5.7)
-│   │   ├── doctor.ts       # store/config drift report + prune
-│   │   ├── validate.ts     # shared “would register” pipeline (install preview)
-│   │   └── errors.ts       # failure taxonomy types + report-to-log mapping
+│   ├── register-types.ts   # shared RegistrationContext/RegisterState types
+│   ├── cli/                # `opencode-agent-plugins` binary: entry, flags, prompts,
+│   │                         install/remove/update/inspect commands
+│   ├── lib/                # shared core — no @opencode/* runtime deps; one module per
+│   │                         concern (resolve, git, clone, install, remove, update,
+│   │                         config-*, store, manifest, mcp, skills, frontmatter,
+│   │                         paths, data, remote, doctor, validate, errors)
 │   ├── schemas/            # vendored Agent Plugins schemas (committed, never fetched)
-│   └── utils/              # dependency-free helpers (logger, ...)
-├── scripts/                # build/dev gates: check-runtime-imports (no OpenCode
-│                             runtime imports), check-failure-kinds (§6 kinds),
+│   └── utils/              # dependency-free helpers (logger)
+├── scripts/                # build/dev gates: check-runtime-imports, check-failure-kinds,
 │                             update-schemas (dev-only schema sync)
 ├── test/                   # shared test infrastructure (helpers, stub context)
-├── test-e2e/               # Docker e2e suite: real opencode + testcontainers, one
-│                             scenario file per area (agent-plugins, remote-mcp,
-│                             cli-ops, cli-session, negative-behavior, plus the
-│                             opt-in top-plugins) driven by Dockerfile +
-│                             bootstrap.mjs + scan-plugin.mjs and fixtures/
-├── vitest.test-e2e.config.ts      # runner config for `pnpm test:e2e`
-└── docs/                    # documentation
-    ├── explanation/         # architecture and design docs
-    │   └── design.md        # the design document
-    └── reference/           # user-facing reference docs
-        ├── cli.md           # CLI commands, flags, statuses, and exit codes
-        └── configuration.md # plugin entry, options, sources, and store
+├── test-e2e/               # Docker e2e suite: real OpenCode via Testcontainers, one
+│                             scenario file per area, fixtures/, Dockerfile
+├── docs/                   # documentation, organized by Diátaxis type
+│   ├── tutorials/          # getting-started walkthrough
+│   ├── guides/             # debugging, e2e testing, Docker checks
+│   ├── reference/          # CLI, configuration, CI, code conventions
+│   └── explanation/        # design.md — the authoritative design
+├── Dockerfile              # host-tool-free quality gate (docs/guides/docker-checks.md)
+└── .github/workflows/      # CI and release (docs/reference/ci.md)
 ```
 
 The project has **two entry points**, each compiling independently and
 importing downward only:
 
-1. **Plugin entry** (`src/index.ts`) — loaded by opencode inside the host
-   process. Talks to opencode exclusively through the V2 `setup` context
+1. **Plugin entry** (`src/index.ts`) — loaded by OpenCode inside the host
+   process. Talks to OpenCode exclusively through the V2 `setup` context
    transforms and imports `@opencode/plugin` **type-only**.
-2. **CLI entry** (`src/cli/index.ts`) — the `opencode-agent-plugins` binary
-   run by the user. Runs on Node, outside opencode.
+2. **CLI entry** (`src/cli/index.ts`) — the `opencode-agent-plugins`
+   binary, run on Node outside OpenCode.
 
-Neither entry imports the other. `src/lib/` imports only `node:*`, Ajv, Zod,
-and `jsonc-parser` — never `@opencode/*`, not even for types — so the CLI
-installs and runs with no OpenCode dependency, and install-time validation is
-byte-identical to load-time validation. This dependency boundary
-(`src/lib/` → no `@opencode/*`) is pinned by
-`scripts/check-runtime-imports.ts` in `pnpm build`, which fails the build on
-any leaked OpenCode value import in the compiled `build/`.
+Neither entry imports the other. `src/lib/` imports only `node:*`, Ajv,
+Zod, and `jsonc-parser` — never `@opencode/*`, not even for types — so
+the CLI runs with no OpenCode dependency and install-time validation is
+byte-identical to load-time validation. The boundary is pinned by
+`scripts/check-runtime-imports.ts` in `pnpm build`. Layer and packaging
+details: [`docs/explanation/design.md`](./docs/explanation/design.md) §4.
+
+## Build And Test Commands
+
+- **Build**: `pnpm build` — compiles to `build/`, copies the schemas, and
+  runs the build gates.
+- **Unit tests**: `pnpm test` (once), `pnpm test:watch` (watch mode).
+- **E2E tests**: `pnpm build && pnpm test:e2e` (Docker required; see the
+  [e2e guide](./docs/guides/e2e-testing.md)).
+- **Type check**: `pnpm typecheck`.
+- **Lint**: `pnpm lint`, `pnpm lint:fix`.
+- **Format check / fix**: `pnpm format:check`, `pnpm format:fix`.
+- **Full gate**: `pnpm check` — format, lint, typecheck, unit tests.
+- **Run**: not applicable — OpenCode loads the plugin; for live debugging
+  see the [debugging guide](./docs/guides/debugging.md).
+
+## Contribution Instructions
+
+- You MUST verify your work with the linter, formatter, and type checker.
+
+  Use the following commands:
+    - `pnpm typecheck` to check for type errors
+    - `pnpm lint` to run the linter (oxlint + Knip)
+    - `pnpm lint:fix` to fix linting issues automatically
+    - `pnpm format:check` to check formatting
+    - `pnpm format:fix` to fix formatting issues
+
+- You MUST update the unit tests for changed code.
+- You MUST run `pnpm test` and make it pass before considering a task
+  done.
+- You MUST update the affected documentation when a change affects it:
+  `README.md`, `DEVELOPMENT.md`, and the pages under `docs/`.
+- When the project structure changes, you MUST update the Project
+  Structure section of this file.
+- If a prompt asks for a refactoring or improvement, capture the resulting
+  rule in the relevant Code Guidelines subsection of this file.
+- After completing a task, verify the written code against the Code
+  Guidelines in this file.
+- Even when the task is to write or update a document, run
+  `pnpm format:check` and fix the Markdown formatting.
+
+## Code Guidelines
+
+### System Design
+
+Design for a CLI tool that doubles as a library consumed by OpenCode:
+
+- The CLI runs and exits — no long-lived state, no background daemons.
+  Perform the requested work and exit with the documented code (`0`
+  success, `1` failure or aborted, `2` `check`/`doctor` found something).
+- Write results and plans to stdout, diagnostics and errors to stderr.
+- Fail fast with clear messages: validate inputs early, report the first
+  error with enough context to fix it, and exit.
+- The plugin entry runs inside OpenCode's host process: keep module scope
+  side-effect-free, `setup` deterministic, and never let it throw.
+- Never touch the network or the filesystem outside the store and config
+  paths the CLI is explicitly managing; the plugin entry never fetches.
+- Keep startup fast — no heavy initialization at module load.
+
+### Architecture
+
+- **Separation of Concerns** — entry points only wire; logic lives in
+  `src/cli/` and `src/lib/` modules.
+- **Single Responsibility Principle** — one module per concern in
+  `src/lib/` (resolve, install, update, ...).
+- **Dependency Direction** — dependencies point downward to `lib/` and
+  `utils/`; no lower layer imports an entry point.
+- **Explicit Boundaries** — the two entries share `lib/` and never import
+  each other.
+- **Data Flow Clarity** — resolve → validate → register (plugin);
+  stage → validate → swap (CLI lifecycle).
+- **Minimize Coupling, Maximize Cohesion** — modules interact through
+  narrow exported functions; `lib/` has no OpenCode dependency at all.
+- **Make Invalid States Impossible** — Zod validates options, Ajv
+  validates manifests, the failure taxonomy is a closed type.
+- **Observability Built-in** — every failure goes through the failure
+  taxonomy and the `[opencode-agent-plugins]` logger.
+- **Keep It Boring** — plain TypeScript, no frameworks, no bundler.
+
+Layers, top to bottom:
 
 ```text
-Plugin entry (src/index.ts)
-      ↓
-options.ts, utils/, lib/ (read-only core)
-```
-
-```text
-CLI entry (src/cli/index.ts)
-      ↓
-lib/ (shared core) + node:*, Ajv, Zod, jsonc-parser
-      ↓
-Plugin store + user opencode config on disk
+plugin entry (src/index.ts)          CLI entry (src/cli/index.ts)
+      ↓                                    ↓
+register layer (src/register*.ts)    CLI commands (src/cli/)
+      ↓                                    ↓
+shared core (src/lib/, src/utils/) — no @opencode/* runtime deps
 ```
 
 New layers (services, utilities) MUST sit below the entry points. Sibling
 layers MUST NOT import from each other arbitrarily; shared logic lives in
 `lib/` or `utils/` and is imported by the layer that needs it.
 
-## Plugin Surface
+**Host contract** — behavioral rules for anything touching registration:
 
-This plugin talks to opencode exclusively through the V2 plugin context:
+- Register only through `ctx.skill.transform` / `ctx.mcp.transform`;
+  collision checks and reports live inside the transform callback, never
+  after the `await`.
+- User-authored config always wins: a colliding name is skipped and
+  reported, never overwritten.
+- No network access at startup: sources that cannot be resolved without
+  fetching are skipped with a warning.
+- `setup` never throws: every per-plugin failure is caught, mapped
+  through the failure taxonomy, and logged; only the narrowest unit is
+  dropped.
+- The entry imports `@opencode/plugin` type-only and default-exports a
+  plain `{ id, setup }` object, so `build/` keeps zero runtime
+  `@opencode/*` imports.
+- No new `as unknown as` cast sites: the sanctioned list is in the
+  [code conventions reference](./docs/reference/code-conventions.md).
 
-- **Registering skills and MCP servers is a `setup`/transform concern.**
-  `setup` registers through `ctx.skill.transform` (per-skill
-  `editor.add({ id, name, description, path, content })`) and
-  `ctx.mcp.transform` (`editor.set(name, { type, ... })`); V2 has no mutable
-  global config object. Transform callbacks are replayed during a batched
-  registry rebuild and may run after `transform()` resolves, so collision
-  checks and reports live inside the callback, never after the `await`.
-- **Never overwrite existing user configuration — user-authored config
-  always wins.** The MCP transform editor exposes config-defined servers, so a
-  colliding name is skipped and reported (warn for user config, error for an
-  earlier plugin in the same setup run). Config-discovered skills are not
-  visible to transforms; the host's skill registry keeps a config skill over a
-  plugin registration of the same name (`docs/explanation/design.md` §9.1.5).
-  Skills registration stays directory-granular on the client side, so a
-  detected collision skips the plugin's whole `skills/` dir (§5.6).
-- **No network access at startup.** Git URLs and installed plugin names
-  resolve against the client store; sources that cannot be resolved without
-  fetching are skipped with a warning. Startup stays fast and offline
-  (installing/updating is the CLI's job).
-- **Failure isolation.** Every per-plugin failure is caught, mapped through
-  the failure taxonomy (`docs/explanation/design.md` §6), and logged; `setup`
-  never throws. Only the narrowest unit is dropped — reject plugin → invalid
-  component type → skip skill → invalid server entry → deny path.
-- **The plugin must not throw during load.** Keep `setup` deterministic; if
-  registration of a feature fails, degrade gracefully rather than breaking
-  opencode startup. V2 reports a broken module (`failed to load plugin`), but
-  the bundle must have no top-level side effects that can throw — all work
-  happens inside `setup`.
-- **Dependency boundary.** The entry imports `@opencode/plugin` **type-only**
-  and default-exports a plain `{ id, setup }` object (not `Plugin.define`) so
-  the compiled `build/` keeps zero runtime OpenCode imports.
-- **Double casts (`as unknown as`) are allowed only at these named sites.**
-  Effect brands the `Skill.Info` ids (`Skill.ID`, `Skill.Name`,
-  `AbsolutePath`), and constructing the brands at runtime would need a
-  forbidden `@opencode/*` value import, so `as unknown as Skill.Info`
-  (`src/register-skills.ts`, `test/stub-context.ts`) is sanctioned for
-  brand construction. The other sanctioned sites are the test doubles:
-  the editor/context facades in `test/stub-context.ts` and the
-  stub → `Context` cast in `src/index.test.ts` (they structurally
-  implement a subset of the branded SDK interfaces). The pre-existing
-  `clean as unknown as ManifestData` in `src/lib/manifest.ts` (the value
-  is already Ajv-validated at runtime) is grandfathered — do not
-  replicate it. No new `as unknown as` site without updating this list.
+Details: [`docs/explanation/design.md`](./docs/explanation/design.md) §5
+(components), §6 (failure taxonomy), §9.1.5 (skill precedence).
 
-## Code Quality
+### Code Quality
 
-All code MUST meet documentation and style requirements before merge:
-
-- **Public API documentation**: Exported functions, classes, interfaces,
-  and their properties MUST have JSDoc comments describing purpose,
-  arguments, return values, and thrown errors (use `@throws` only for
-  specific errors).
-- **Static analysis gates**: Every change MUST pass TypeScript compilation
-  (`pnpm typecheck`), oxlint (`pnpm lint`), and Prettier/Markdownlint
-  (`pnpm format:check`) before merge.
-- **Do not modify linter or formatter configurations**: Never change
-  oxlint, Prettier, Markdownlint, or TypeScript configuration files
+- Exported functions, classes, interfaces, and their properties MUST have
+  JSDoc comments describing purpose, arguments, and return values (use
+  `@throws` only for specific errors).
+- Never modify linter, formatter, or TypeScript configuration files
   (`oxlint.config.ts`, `.prettierrc`, `.prettierignore`,
-  `.markdownlint-cli2.yaml`, `tsconfig.json`, `tsconfig.build.json`)
-  to work around lint or formatting errors. Fix the source code instead.
-  If the issue cannot be resolved after a few attempts, ask the human for
-  help. Legitimate structural edits to these files (for example, the
-  base/build/test tsconfig split) are not "workarounds" and are allowed.
-- **Error handling strategy**: Prefer throwing errors over returning error
-  values. Handle errors at top-level entry points where they can be logged.
-- **Secrets and API keys**: Never write credentials (API keys, tokens,
-  passwords) into the repository — not in source, scripts, config files,
-  fixture data, compose files, or shell-history-prone tooling. When a
-  script needs a secret, obtain it at runtime from the environment, a
-  file kept OUTSIDE the repo, or a hidden interactive prompt; export it
-  into the child process environment without ever echoing it, and never
-  pass it via command-line arguments.
-- **File naming**: Use kebab-case for all file names. TypeScript source
-  files MUST use lower-case kebab-case. Do NOT use PascalCase or camelCase
-  file names.
-- **ESM import specifiers**: The project targets `module: Node16`. Relative
-  imports MUST include the `.js` extension (e.g., `./lib/paths.js`), even
-  though the source is `.ts`.
-- **Knip unused-export analysis**: The project uses Knip
-  (`knip.config.ts`) to detect unused exports. All Knip findings MUST
-  be resolved — either remove the unused export or, when the export is
-  genuinely needed but not reachable through the public dependency
-  graph, mark it with the JSDoc `@internal` tag. The `@internal` tag
-  is allowed **only** when a symbol is exported solely for test files
-  and is intentionally **not** re-exported from the module barrel.
-  Every `@internal` tag MUST include a short explanation of why the
-  export is excluded (e.g., "Exported for tests only; not part of the
-  public module API"). Do NOT use `@internal` to silence legitimate
-  unused-export warnings — remove the export instead.
-- **File size limit**: Source files SHOULD stay within 300 lines of code.
-  When a file approaches or exceeds this limit — or fails the oxlint
-  `max-lines` gate (300 lines) — your FIRST and default response MUST be
-  to **split the file into several smaller, cohesive files**, each with a
-  single, clear responsibility (extract related functions, types, or
-  constants into dedicated modules, and re-export them through the
-  barrel). Treat the limit as a signal that the file is doing too much,
-  not as a quota to optimize against. You MUST attempt a split before any
-  other tactic; only fall back if you can articulate a concrete reason a
-  split would hurt clarity. For test files, split a large `*.test.ts`
-  into multiple focused `*.test.ts` files grouped by the behavior they
-  verify — multiple test files per source module are explicitly allowed.
-  **Do NOT** satisfy the limit by making the existing code shorter: no
-  condensing tests into table-driven blocks purely to save lines, no
-  shortening of identifiers, string literals, or file paths, no merging
-  statements onto one line, and no removing blank lines, comments, or
-  JSDoc. Formatting is managed by Prettier and must stay uniform —
-  readability and clarity always win over line count.
-  Exceptions: auto-generated files.
-- **Function size limit**: Functions SHOULD stay within 50 lines of code.
-  When approaching or exceeding this limit, break the function into
-  smaller, named helper functions with single, clear responsibilities.
-  **Do NOT** condense logic into dense one-liners, inline multiple
-  statements on a single line, or strip whitespace to fit the limit —
-  formatting is managed by Prettier and must not be sacrificed for
-  brevity.
-  Exceptions: auto-generated files.
+  `.markdownlint-cli2.yaml`, `tsconfig*.json`) to work around an error —
+  fix the source instead. Legitimate structural edits (for example the
+  base/build/test tsconfig split) are allowed.
+- Prefer throwing errors over returning error values; handle errors at
+  top-level entry points where they can be logged.
+- Never write credentials (API keys, tokens, passwords) into the
+  repository. Obtain secrets at runtime from the environment, a file kept
+  outside the repo, or a hidden prompt; never pass them via command-line
+  arguments.
+- File names: kebab-case; TypeScript source files lower-case kebab-case.
+- Relative imports MUST include the `.js` extension (module: Node16),
+  e.g. `./lib/paths.js`.
+- Keep files within 300 lines and functions within 50 lines by splitting,
+  never by condensing — full rules in the
+  [code conventions reference](./docs/reference/code-conventions.md).
+- Resolve all Knip findings; `@internal` is only for test-only exports —
+  full rules in the
+  [code conventions reference](./docs/reference/code-conventions.md).
 
-**Rationale**: Consistent documentation and tooling enforcement prevents
-technical debt accumulation and ensures codebase navigability.
+### Testing
 
-## Testing
+- Every module MUST have test coverage. Test files are co-located with
+  their source files and MUST use the `.test.ts` suffix.
+- Shared test infrastructure lives in `test/` and MUST NOT use the
+  `.test.ts` suffix.
+- All changes MUST pass `pnpm test`; never delete or weaken tests without
+  explicit justification; update affected cases in the same change as the
+  behavior.
+- Prefer real behavior over mocks: exercise the plugin entry by calling
+  `setup` with `stubContext()` and asserting on the recorded
+  registrations and log entries (`test/stub-context.ts`).
+- Any test that exercises a real OpenCode binary MUST run inside Docker —
+  never install or run OpenCode on the host. The e2e suite lives in
+  `test-e2e/` ([guide](./docs/guides/e2e-testing.md)); the testing
+  strategy is design §9.
 
-Every module MUST have test coverage:
+### Dependency Management
 
-- **Test file placement**: Test files are co-located with their source
-  files in `src/` and MUST use the `.test.ts` suffix (e.g.,
-  `src/options.test.ts` next to `src/options.ts`).
-- **Shared test utilities**: Common test infrastructure lives in the
-  `test/` directory. These files MUST NOT use the `.test.ts` suffix — they
-  are test support code, not test cases.
-- **Test verification mandatory**: All changes MUST pass `pnpm test`
-  before merge. Tests MUST NOT be deleted or weakened without explicit
-  justification.
-- **Test cases stay consistent with code**: When a change alters
-  behavior, update the affected test cases in the same change. A case left
-  asserting stale behavior, or written so it can never pass as-is (wrong
-  endpoint, mismatched id, unreachable fixture), is a defect, not
-  documentation: fix the case with the code.
-- **Real opencode tests run in Docker**: Any test that exercises a real
-  opencode binary MUST run inside a Docker container — never install or
-  run opencode on the host. The e2e suite in `test-e2e/` boots the
-  pinned release via Testcontainers; run it with `pnpm build` and
-  `pnpm test:e2e` (requires a working Docker engine).
-- **Prefer real behavior over mocks**: The plugin entry is exercised by
-  calling `setup` with `stubContext()` and asserting on the recorded
-  registrations and log entries, not by mocking opencode internals. The
-  stub context in `test/stub-context.ts` records every skill/MCP
-  registration and log entry.
+- Pin all dependency versions explicitly — no `^` or `~`.
+- `@opencode/plugin` and `@opencode/client` are type-only
+  devDependencies; the compiled `build/` must keep zero runtime
+  `@opencode/*` imports (enforced by `scripts/check-runtime-imports.ts`
+  in `pnpm build`).
+- Keep the OpenCode version in sync across `package.json` and
+  `OPENCODE_VERSION` in `.github/workflows/ci.yml`; the npm packages and
+  the binary MAY differ by a patch but MUST stay on the same minor line.
+  After a bump: `pnpm typecheck`, `pnpm test`, and the e2e suite.
+- Prefer vanilla Node.js APIs and standard language features; add a
+  dependency only for significant value over a vanilla implementation.
+- Dependencies MUST come from well-established, actively maintained
+  projects; do NOT add niche or obscure packages.
+- Use the latest stable version — check the registry when adding a
+  dependency, never copy a version number from memory.
 
-**Rationale**: Co-locating tests with source keeps related files close,
-making it easier to find, update, and maintain them.
+### Configuration & Documentation
 
-## Dependency Management
+- Changes to the build process, plugin surface, configuration, or project
+  structure MUST update the affected documents in the same change
+  (`README.md`, `DEVELOPMENT.md`, the pages under `docs/`, and the
+  Project Structure section above).
+- Public behavior MUST match `docs/explanation/design.md`; when they
+  diverge, the design is the contract and the code must be fixed.
+- Runtime configuration (plugin entry options, CLI flags, store env
+  vars) is documented in the
+  [configuration reference](./docs/reference/configuration.md) and the
+  [CLI reference](./docs/reference/cli.md).
+- TypeScript project structure (the base/build/test tsconfig split and
+  why `*.test.ts` must stay in `tsconfig.json`): see the
+  [code conventions reference](./docs/reference/code-conventions.md).
 
-- **Pin all dependency versions explicitly**: Do not use `^` or `~` in
-  `package.json`.
-- **Type-only dependencies are devDependencies**: The OpenCode plugin type
-  package (`@opencode/plugin`) is imported only for types (erased at compile
-  time), so it lives in `devDependencies` (as does `@opencode/client`, used by
-  the e2e suite). The compiled plugin output (`build/`) retains zero runtime
-  `@opencode/*` imports — enforced by `scripts/check-runtime-imports.ts` in
-  `pnpm build`, which fails the build on any leaked value import (`import type
-  { ... }` is the only correct form).
-- **Keep the opencode version in sync.** The opencode release is pinned
-  in `package.json` (`@opencode/plugin` and `@opencode/client`) and the
-  `OPENCODE_VERSION` env in `.github/workflows/ci.yml`; the npm packages and
-  the binary MAY differ by a patch but MUST stay on the same minor line — the
-  plugin is only verified against one opencode release at a time. After any
-  bump, run `pnpm typecheck` (API compatibility against the new types),
-  `pnpm test`, and the e2e suite before merging.
+### Other
 
-External dependencies MUST be carefully evaluated before adoption:
+Markdown formatting: `pnpm format:check` runs Markdownlint and Prettier
+and enforces most rules (see `.markdownlint-cli2.yaml`). The conventions
+the linter does not enforce:
 
-- **Prefer vanilla solutions**: Use Node.js built-in APIs and standard
-  language features when they adequately solve the problem. Only add a
-  dependency when it provides significant value over a vanilla
-  implementation.
-- **Reputable sources only**: Dependencies MUST come from
-  well-established, actively maintained projects. Evaluate by: weekly
-  downloads (prefer >100k), GitHub stars, recent commit activity, and
-  known maintainers.
-- **Avoid unpopular libraries**: Do NOT add niche or obscure packages
-  with limited community adoption. These pose security risks and may
-  become unmaintained.
-- **Minimize dependency count**: Each new dependency increases attack
-  surface, bundle size, and maintenance burden. Justify every addition.
-- **Use the latest stable version**: When adding a new dependency,
-  explicitly check the package registry for the latest stable release and
-  use it. Do not copy outdated version numbers from memory, training
-  data, or existing lock files of other projects.
-
-**Rationale**: Fewer, well-vetted dependencies reduce security
-vulnerabilities, supply chain risks, and long-term maintenance costs.
-
-## Configuration & Documentation
-
-Configuration and documentation MUST stay synchronized with code:
-
-- **Documentation updates required**: Changes to build process, plugin
-  surface, or configuration MUST update relevant documentation.
-- **Structure tracking**: Changes to project structure MUST update the
-  Project Structure section in `AGENTS.md`.
-- **TypeScript project structure**: The project uses a base/build/test
-  tsconfig split. `tsconfig.json` is the shared base and the config the
-  editor keys off; it includes production source and tests and sets
-  `types: ["node"]`, so every file (including `*.test.ts`) resolves Node
-  built-ins like `node:url` in the editor. `tsconfig.build.json` extends
-  the base, adds `outDir`/`rootDir`, and excludes tests for the compiled
-  `build/` output. `tsconfig.test.json` extends the base with `noEmit`
-  for the typecheck gate. Do NOT exclude `*.test.ts` from `tsconfig.json`:
-  doing so makes the editor treat test files as orphans and report false
-  `Cannot find name 'node:*'` errors that `pnpm typecheck` does not
-  reproduce.
-
-**Rationale**: Stale documentation causes onboarding friction and
-operational incidents.
-
-## Markdown Formatting
-
-All Markdown files MUST follow these formatting rules:
-
-- **Line length**: Keep lines at most 80 characters. This is not a hard
-  lint gate, but SHOULD be followed for readability. Lines inside fenced
-  code blocks are exempt from this limit.
-- **Unordered lists**: Use dashes (`-`) for bullet points. Indent nested
-  list items by 4 spaces.
-- **Continuation lines**: When a list item wraps to the next line, align
-  the continuation with the first character of the item text, not the
-  list marker. This applies to all list types (ordered and unordered).
-- **Emphasis**: Use asterisks (`*`) for emphasis (`*italic*`,
-  `**bold**`). Do NOT use underscores.
-- **Headings**: Duplicate heading names are allowed only among sibling
-  headings (same parent level). Avoid duplicates across different levels.
-- **Inline HTML**: Avoid raw HTML in Markdown. The only allowed elements
-  are `<a>`, `<p>`, `<details>`, `<summary>`, and `<img>`.
-- **Trailing spaces**: Do NOT leave trailing whitespace on any line. Do
-  NOT use two-space line breaks — use a blank line instead.
-- **Bare URLs**: Bare URLs are permitted and do not need to be wrapped
-  in angle brackets.
-- **Table formatting**: Align table columns with padding when the table
-  fits within 80 characters. If the table exceeds 80 characters or
-  triggers an MD060 linter warning, switch to a compact format using
-  single spaces only. This applies to the separator row as well — it
-  should be written as `| --- |`, not `|--|`.
-
-  Example of correct layout:
-
-  ```markdown
-  | Col1 | Col2 |
-  | --- | --- |
-  | Value1 | Value2 |
-  ```
-
-  Do NOT use extra padding or alignment characters beyond single spaces.
-
-**Rationale**: Uniform Markdown formatting improves readability for both
-humans and AI agents that consume project documentation.
+- Keep lines at most 80 characters where practical; fenced code blocks
+  are exempt.
+- Align wrapped list continuation lines with the first character of the
+  item text, not the list marker.
+- Tables: pad columns when the table fits within 80 characters, otherwise
+  use single spaces (`| --- |`, not `|--|`).

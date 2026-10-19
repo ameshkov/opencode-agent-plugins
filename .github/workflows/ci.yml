@@ -49,7 +49,7 @@ jobs:
   # type-check, and unit tests — through the repo's multi-stage Dockerfile
   # (its default `ci-output` collector). Docker can only build a Linux
   # container, so this guards the reproducible, host-tool-free CI path
-  # documented in DEVELOPMENT.md ("Running Checks in Docker") and exercises
+  # documented in docs/guides/docker-checks.md and exercises
   # every Dockerfile stage end to end.
   docker:
     name: CI Gate (Docker)
