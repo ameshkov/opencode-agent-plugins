@@ -43,8 +43,10 @@ design is the contract and the code must be fixed.
   parsing), `jsonc-parser` (config edits); `@opencode/plugin` and
   `@opencode/client` are type-only devDependencies.
 - **Storage**: the filesystem — the client store under
-  `<data-home>/opencode/agent-plugins/` and the user's OpenCode config
-  (see the [configuration reference](./docs/reference/configuration.md)).
+  `<config-dir>/opencode-agent-plugins/` (the OpenCode config directory:
+  `$OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then
+  `~/.config/opencode`) and the user's OpenCode config (see the
+  [configuration reference](./docs/reference/configuration.md)).
 - **Testing**: Vitest 4 for unit tests; Testcontainers plus a real
   OpenCode binary in Docker for e2e tests.
 - **Target Platform**: the OpenCode host process (plugin entry) and

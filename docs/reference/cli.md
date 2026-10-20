@@ -26,7 +26,7 @@ npx opencode-agent-plugins <command> [args] [options]
 | --- | --- | --- |
 | `--yes` | `install`, `remove`, `update`, `prune` | Skips confirmation prompts. For `install`, the loader entry is added automatically with a warning when it is missing. |
 | `--dry-run` | `install`, `remove`, `update` | Prints the plan without changing anything on disk. |
-| `--global` / `--config <path>` | all commands except `list` | Selects the OpenCode config: the project `opencode.json` by default, `--global` for `~/.config/opencode/opencode.json`, or an explicit file. `install` and `remove` edit it; the other commands use it to resolve path sources and store references. |
+| `--global` / `--config <path>` | all commands except `list` | Selects the OpenCode config: the project `opencode.json` by default, `--global` for the global config (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`), or an explicit file. `install` and `remove` edit it; the other commands use it to resolve path sources and store references. |
 | `--ref <ref>` | `install` | Installs at the given git ref instead of the source's `#ref` or the remote `HEAD`. |
 | `--no-register` | `install` | Installs without editing the config; prints the snippet to add manually. |
 | `--keep-data` | `remove` | Keeps `PLUGIN_DATA`. |

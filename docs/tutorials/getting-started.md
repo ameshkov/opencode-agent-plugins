@@ -51,7 +51,7 @@ installed context7 1.0.1. Restart OpenCode to use it.
 ## 2. Look at what changed
 
 The CLI registered the source in your project's `opencode.json` and copied
-the plugin into the client store (`~/.local/share/opencode/agent-plugins`
+the plugin into the client store (`~/.config/opencode/opencode-agent-plugins`
 by default). The config now contains:
 
 ```json

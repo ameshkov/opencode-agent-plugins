@@ -2,8 +2,9 @@ import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  configDir,
+  configHome,
   dataDirForKey,
-  dataHome,
   dataKeyForPath,
   dataKeyForSlug,
   ensureDataDir,
@@ -11,23 +12,30 @@ import {
 } from './data.js';
 import { tempDir, storeEnv } from '../../test/helpers.js';
 
-describe('dataHome', () => {
-  it('prefers XDG_DATA_HOME', () => {
-    expect(dataHome({ XDG_DATA_HOME: '/xdg' })).toBe('/xdg');
+describe('configHome / configDir', () => {
+  it('prefers XDG_CONFIG_HOME', () => {
+    expect(configHome({ XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg');
+    expect(configDir({ XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg/opencode');
   });
 
-  it('falls back to ~/.local/share', async () => {
+  it('lets OPENCODE_CONFIG_DIR replace the whole config directory', () => {
+    expect(configDir({ OPENCODE_CONFIG_DIR: '/custom', XDG_CONFIG_HOME: '/xdg' })).toBe('/custom');
+  });
+
+  it('falls back to ~/.config/opencode', async () => {
     const { homedir } = await import('node:os');
     const { join } = await import('node:path');
-    expect(dataHome({})).toBe(join(homedir(), '.local', 'share'));
+    expect(configHome({})).toBe(join(homedir(), '.config'));
+    expect(configDir({})).toBe(join(homedir(), '.config', 'opencode'));
   });
 });
 
 describe('storeRoot / dataDirForKey', () => {
-  it('lays out the store under <data-home>/opencode/agent-plugins', () => {
-    expect(storeRoot({ XDG_DATA_HOME: '/xdg' })).toBe('/xdg/opencode/agent-plugins');
-    expect(dataDirForKey('key', { XDG_DATA_HOME: '/xdg' })).toBe(
-      '/xdg/opencode/agent-plugins/data/key',
+  it('lays out the store under <config-dir>/opencode-agent-plugins', () => {
+    expect(storeRoot({ XDG_CONFIG_HOME: '/xdg' })).toBe('/xdg/opencode/opencode-agent-plugins');
+    expect(storeRoot({ OPENCODE_CONFIG_DIR: '/custom' })).toBe('/custom/opencode-agent-plugins');
+    expect(dataDirForKey('key', { XDG_CONFIG_HOME: '/xdg' })).toBe(
+      '/xdg/opencode/opencode-agent-plugins/data/key',
     );
   });
 });
@@ -49,7 +57,9 @@ describe('ensureDataDir', () => {
       const env = storeEnv(home.root);
       const key = 'test-key';
       const created = await ensureDataDir(key, env);
-      expect(created).toBe(await realpath(join(home.root, 'opencode/agent-plugins/data', key)));
+      expect(created).toBe(
+        await realpath(join(home.root, 'opencode', 'opencode-agent-plugins', 'data', key)),
+      );
       const nested = join(created, 'state');
       await mkdir(nested, { recursive: true });
       await writeFile(join(nested, 'f.txt'), 'x', 'utf8');

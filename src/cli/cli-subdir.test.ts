@@ -74,7 +74,8 @@ beforeAll(async () => {
 
   store = await tempDir('oap-cli-subdir-store-');
   env = storeEnv(store.root);
-  process.env['XDG_DATA_HOME'] = env['XDG_DATA_HOME'];
+  process.env['XDG_CONFIG_HOME'] = env['XDG_CONFIG_HOME'];
+  process.env['OPENCODE_CONFIG_DIR'] = '';
   configPath = join(store.root, 'opencode.json');
   await writeFile(
     configPath,
@@ -89,7 +90,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env['XDG_DATA_HOME'];
+  delete process.env['XDG_CONFIG_HOME'];
+  delete process.env['OPENCODE_CONFIG_DIR'];
   vi.restoreAllMocks();
   await fixture.cleanup();
   await store.cleanup();

@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Changed
 
+- The client store now lives under the OpenCode config directory
+  (`<config-dir>/opencode-agent-plugins/`) instead of the data directory.
+  The config directory follows OpenCode: `$OPENCODE_CONFIG_DIR`, then
+  `$XDG_CONFIG_HOME/opencode`, then `~/.config/opencode`. Existing stores
+  under the old data-directory location are not migrated: reinstall each
+  source with `install`. To remove a source installed before the move, run
+  `install <source>` and then `remove <name>`, or delete its config entry
+  manually. `PLUGIN_DATA` under the old location is not migrated: move
+  `data/<key>` into the new store to keep it.
 - Migrated the plugin to the OpenCode V2 plugin API: the entry is now a
   `{ id, setup }` definition that registers skills through
   `ctx.skill.transform` and MCP servers through `ctx.mcp.transform`, and the

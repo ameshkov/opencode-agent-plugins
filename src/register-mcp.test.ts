@@ -27,8 +27,9 @@ describe('MCP registration', () => {
   });
 
   it('lets user config win on name collisions', async () => {
-    const dataHome = await tempDir('oap-data-');
-    vi.stubEnv('XDG_DATA_HOME', dataHome.root);
+    const configHome = await tempDir('oap-config-');
+    vi.stubEnv('XDG_CONFIG_HOME', configHome.root);
+    vi.stubEnv('OPENCODE_CONFIG_DIR', '');
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
       'mcp.json': JSON.stringify({
@@ -51,7 +52,7 @@ describe('MCP registration', () => {
     } finally {
       vi.unstubAllEnvs();
       await plugin.cleanup();
-      await dataHome.cleanup();
+      await configHome.cleanup();
     }
   });
 

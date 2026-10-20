@@ -90,14 +90,14 @@ export const VALID_PLUGIN_TREE: Record<string, string> = {
 };
 
 /**
- * Builds an environment whose XDG data home is a temp dir (isolaing the
+ * Builds an environment whose XDG config home is a temp dir (isolating the
  * client store per test).
  *
- * @param dir - The temp data home.
- * @returns `{ XDG_DATA_HOME: dir }` (plus the real HOME for ~ expansion).
+ * @param dir - The temp config home.
+ * @returns `{ XDG_CONFIG_HOME: dir }` (plus the real HOME for ~ expansion).
  */
 export function storeEnv(dir: string): Record<string, string | undefined> {
-  return { XDG_DATA_HOME: dir, HOME: process.env['HOME'] };
+  return { XDG_CONFIG_HOME: dir, HOME: process.env['HOME'] };
 }
 
 /**

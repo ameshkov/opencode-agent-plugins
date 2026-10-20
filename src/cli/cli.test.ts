@@ -36,7 +36,7 @@ const source = () => `file://${bare}`;
 const slug = () => slugOf(source());
 let configPath = '';
 let env: Record<string, string | undefined> = {};
-let dataHome = { root: '' };
+let configHome = { root: '' };
 
 function argsOf(command: string, positionals: string[], flags: string[] = []) {
   return parseArgs([command, ...positionals, '--config', configPath, ...flags]);
@@ -61,9 +61,10 @@ beforeAll(async () => {
   await gitCmd(['push', '--tags'], work);
 
   const store = await tempDir('oap-cli-store-');
-  dataHome = { root: store.root };
+  configHome = { root: store.root };
   env = storeEnv(store.root);
-  process.env['XDG_DATA_HOME'] = env['XDG_DATA_HOME'];
+  process.env['XDG_CONFIG_HOME'] = env['XDG_CONFIG_HOME'];
+  process.env['OPENCODE_CONFIG_DIR'] = '';
   configPath = join(store.root, 'opencode.json');
   await writeFile(
     configPath,
@@ -73,7 +74,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env['XDG_DATA_HOME'];
+  delete process.env['XDG_CONFIG_HOME'];
+  delete process.env['OPENCODE_CONFIG_DIR'];
   vi.restoreAllMocks();
 });
 
@@ -382,7 +384,7 @@ describe('CLI lifecycle', () => {
   });
 
   it('update applies the new version and preserves PLUGIN_DATA', async () => {
-    const dataDir = join(dataHome.root, 'opencode/agent-plugins/data', slug());
+    const dataDir = join(configHome.root, 'opencode', 'opencode-agent-plugins', 'data', slug());
     await mkdir(dataDir, { recursive: true });
     await writeFile(join(dataDir, 'state.txt'), 'keep me', 'utf8');
 

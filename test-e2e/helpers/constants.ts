@@ -41,8 +41,8 @@ export const FAKE_MODEL_PORT = 8787;
 /** Plugin name/values the assertions use (see fixtures + §5.7–§5.8). */
 export const PLUGIN_ROOT = '/app/fixtures/my-plugin';
 
-/** Store root under the redirect-HOME (opencode convention, §5.8). */
-export const STORE_DIR = '/app/opencode-home/.local/share/opencode/agent-plugins';
+/** Store root under the redirect-HOME (OpenCode config-dir convention, §5.3.2). */
+export const STORE_DIR = '/app/opencode-home/.config/opencode/opencode-agent-plugins';
 
 /** PLUGIN_DATA key prefix of the path-sourced fixture (`<name>-<hash8>`). */
 export const DATA_DIR_PREFIX = `${STORE_DIR}/data/hello-`;

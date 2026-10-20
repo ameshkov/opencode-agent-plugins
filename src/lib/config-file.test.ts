@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   configPreferenceNote,
   ConfigEditError,
@@ -8,14 +8,6 @@ import {
   saveConfig,
 } from './config-file.js';
 import { storeEnv, tempDir } from '../../test/helpers.js';
-
-/** Controlled `homedir()` for the global-scope tests (§5.11). */
-const { mockHomedir } = vi.hoisted(() => ({ mockHomedir: { value: '' } }));
-
-vi.mock('node:os', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:os')>();
-  return { ...actual, homedir: () => mockHomedir.value };
-});
 
 describe('resolveConfigFile', () => {
   it('prefers opencode.jsonc when both exist in the project scope (§5.11)', async () => {
@@ -60,16 +52,30 @@ describe('resolveConfigFile', () => {
   it('prefers opencode.jsonc in the global scope too (§5.11)', async () => {
     const home = await tempDir('oap-cfg-home-');
     try {
-      const globalDir = join(home.root, '.config', 'opencode');
+      const globalDir = join(home.root, 'opencode');
       await mkdir(globalDir, { recursive: true });
       await writeFile(join(globalDir, 'opencode.json'), '{}', 'utf8');
       await writeFile(join(globalDir, 'opencode.jsonc'), '{}', 'utf8');
-      mockHomedir.value = home.root;
-      const resolved = await resolveConfigFile({ kind: 'global' });
+      const resolved = await resolveConfigFile({ kind: 'global' }, storeEnv(home.root));
       expect(resolved.path).toBe(join(globalDir, 'opencode.jsonc'));
       expect(resolved.jsoncWins).toBe(true);
     } finally {
-      mockHomedir.value = '';
+      await home.cleanup();
+    }
+  });
+
+  it('uses OPENCODE_CONFIG_DIR for the global scope when set', async () => {
+    const home = await tempDir('oap-cfg-home-');
+    try {
+      const customDir = join(home.root, 'custom-opencode');
+      await mkdir(customDir, { recursive: true });
+      await writeFile(join(customDir, 'opencode.json'), '{}', 'utf8');
+      const resolved = await resolveConfigFile(
+        { kind: 'global' },
+        { OPENCODE_CONFIG_DIR: customDir },
+      );
+      expect(resolved.path).toBe(join(customDir, 'opencode.json'));
+    } finally {
       await home.cleanup();
     }
   });

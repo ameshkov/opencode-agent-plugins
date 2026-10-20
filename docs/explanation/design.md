@@ -422,15 +422,18 @@ Zod-parsed, strict on known keys, warn on unknowns. See §3.1.
 #### 5.3.2 Client store (managed plugin copies)
 
 ```text
-<data-home>/opencode/agent-plugins/
+<config-dir>/opencode-agent-plugins/
 ├── installed/<slug>/          # exported plugin root (repo root or subdir, no .git)
 ├── meta/<slug>.json           # client metadata (git URL, ref, resolved commit, ...)
 ├── data/<key>/                # PLUGIN_DATA (see §5.8)
-└── backups/                   # config-edit .bak files, kept out of the user's repo
+└── backups/                   # config-edit .bak files, kept out of the user's repo by default
 ```
 
-`<data-home>` follows Opencode's own data-dir convention: `$XDG_DATA_HOME` when
-set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
+`<config-dir>` follows OpenCode's own config-dir convention:
+`$OPENCODE_CONFIG_DIR` when set, else `$XDG_CONFIG_HOME/opencode`, else
+`~/.config/opencode` (the same path on every platform, like OpenCode).
+When `$OPENCODE_CONFIG_DIR` points inside a repository, the whole store
+(including `backups/`) is written there; use a dedicated config directory.
 
 - `slug` is derived from the source URL (host/org/repo, sanitized) so the same
   repository is idempotently installed once; a subdir selection extends the slug
@@ -678,8 +681,8 @@ Details:
 
 ### 5.8 `PLUGIN_DATA`
 
-- Layout: `<data-home>/opencode/agent-plugins/data/<key>/` (see §5.3.2 for
-  `<data-home>` resolution). The key is chosen per source kind:
+- Layout: `<config-dir>/opencode-agent-plugins/data/<key>/` (see §5.3.2 for
+  `<config-dir>` resolution). The key is chosen per source kind:
     - **Git-sourced:** `key = slug` — stable across plugin renames (the slug comes
     from the URL and any subdir selection, not the manifest) and human-matching
     to `installed/<slug>`; distinct subdirs of one repository get distinct keys
@@ -695,10 +698,12 @@ Details:
     across plugin updates").
     - Removed by `opencode-agent-plugins remove` (§5.12.2); path-sourced plugins have
     no CLI-managed removal.
-    - **Orphans:** if the store moves (XDG change, home migration) or a config entry
-    is hand-deleted, data dirs become orphaned. Nothing auto-deletes them at
-    startup; `opencode-agent-plugins doctor` lists them and `prune` removes them
-    (§5.11). Startup stays read-only/fast.
+    - **Orphans:** a hand-deleted config entry leaves a data dir orphaned
+    within the current store; nothing auto-deletes it at startup,
+    `opencode-agent-plugins doctor` lists it, and `prune` removes it
+    (§5.11). If the store root itself moves (config-dir change, machine
+    migration), the old tree is abandoned: nothing discovers it, and it
+    must be removed manually. Startup stays read-only/fast.
 - Created eagerly during registration only when the plugin has at least one valid
   stdio server (spec: "MUST create the directory before launching a plugin
   subprocess").
@@ -749,7 +754,9 @@ Behavior notes:
   touching anything.
 - **Config registration** (`install`): edits the `plugins` array of the resolved
   Opencode config — the project `opencode.json` by default, `--global` for
-  `~/.config/opencode/opencode.json`, `--config <path>` to pick a file. The V2
+  `<config-dir>/opencode.json` (the config directory follows OpenCode:
+  `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else
+  `~/.config/opencode`), `--config <path>` to pick a file. The V2
   entry is `{ "package": "opencode-agent-plugins", "options": { … } }` (a bare
   package string is recognised and replaced by the object form on the first
   write); a legacy V1 `["opencode-agent-plugins", {…}]` tuple is read, its
@@ -1212,7 +1219,8 @@ Findings that adjust the design:
 | Plugin load failures | V2 reports them (`failed to load plugin`); import-safe bundle; failures logged loudly from inside `setup` |
 | Opencode deduplicates plugin entries by package identity | Single-entry + `options.plugins` is the only documented multi-source form (§3.1); re-verify dedup behavior per release |
 | Transform registrations clobber user-authored `mcp`/`skills` entries | User-config-wins precedence (§3.2, §5.6, §5.7): the MCP editor pre-check skips config servers; the host's skill registry enforces config precedence; registrations never overwrite pre-existing entries |
-| Store/config drift (hand-deleted config entries, moved store, crashed swaps) leaves orphans | Nothing auto-deleted at startup; `doctor` reports, `prune` cleans (§5.11) |
+| Store/config drift (hand-deleted config entries, crashed swaps) leaves orphans | Nothing auto-deleted at startup; `doctor` reports and `prune` cleans orphans within the current store (§5.11). A moved store root (config-dir change, machine migration) is abandoned and must be removed manually |
+| Store and `PLUGIN_DATA` sit inside OpenCode's recursively watched config directory | OpenCode 2.0.16 watches the global config dir recursively (only `node_modules`/`.git` ignored), so store writes feed the debounced config reload. `Config.reload` deep-equals and early-returns, so there is no reload loop today. Accepted consequence of the chosen location; re-verify the watch behavior per OpenCode release (source-read, not runtime-measured) |
 | Skills scan depth / `<available_skills>` surface differ between docs and observed behavior | Design robust to both (§5.6 nested-SKILL.md warning); E2E pins actual behavior per release (§9.2) |
 | V2 config spec form changes (e.g. the object entry shape) | Object form documented; E2E pins the form per release (§9.1) |
 | Path containment bypass via symlinked plugin roots | Always `realpath` before validating; containment checks run on resolved paths |

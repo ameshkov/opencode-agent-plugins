@@ -49,8 +49,9 @@ describe('agentPlugins plugin definition (V2)', () => {
         },
       }),
     });
-    const dataHome = await tmpPlugin({ x: 'x' });
-    vi.stubEnv('XDG_DATA_HOME', dataHome.root);
+    const configHome = await tmpPlugin({ x: 'x' });
+    vi.stubEnv('XDG_CONFIG_HOME', configHome.root);
+    vi.stubEnv('OPENCODE_CONFIG_DIR', '');
     try {
       const root = await realpath(plugin.root);
       const stub = stubContext({ options: { plugins: [plugin.root] } });
@@ -72,7 +73,7 @@ describe('agentPlugins plugin definition (V2)', () => {
       }
     } finally {
       await plugin.cleanup();
-      await dataHome.cleanup();
+      await configHome.cleanup();
     }
   });
 

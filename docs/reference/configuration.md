@@ -3,8 +3,10 @@
 ## Plugin entry
 
 OpenCode V2 loads Agent Plugins through one `opencode-agent-plugins` entry in
-the `plugins` array of its config — the project `opencode.json`, or
-`~/.config/opencode/opencode.json` when registered globally:
+the `plugins` array of its config — the project `opencode.json`, or the
+global OpenCode config when registered globally. The global config directory
+is `$OPENCODE_CONFIG_DIR` when set, else `$XDG_CONFIG_HOME/opencode`, else
+`~/.config/opencode`:
 
 ```jsonc
 {
@@ -62,16 +64,19 @@ Each entry in `plugins` is one of:
 Git-sourced plugins are installed into the client store:
 
 ```text
-<data-home>/opencode/agent-plugins/
+<config-dir>/opencode-agent-plugins/
 ├── installed/<slug>/   # exported plugin tree (repo root or subdir, no .git)
 ├── meta/<slug>.json    # client metadata (URL, ref, subdir, resolved commit, ...)
 ├── data/<key>/         # PLUGIN_DATA directories
 └── backups/            # timestamped backups of config edits
 ```
 
-`<data-home>` follows OpenCode's data-dir convention: `$XDG_DATA_HOME` when
-set, else `~/.local/share` on Linux/macOS and `%LOCALAPPDATA%` on Windows.
-`PLUGIN_DATA` lives outside the installed tree, so it survives updates.
+`<config-dir>` is OpenCode's config directory: `$OPENCODE_CONFIG_DIR` when
+set, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` (the same
+path on every platform, like OpenCode). If `$OPENCODE_CONFIG_DIR` points
+inside a repository, the store (including `backups/`) is written there; use
+a dedicated config directory. `PLUGIN_DATA` lives outside the installed
+tree, so it survives updates.
 A subpath source exports only the selected subdirectory; slug, metadata, and
 `PLUGIN_DATA` are per subdir, so two plugins of one monorepo install side by
 side.

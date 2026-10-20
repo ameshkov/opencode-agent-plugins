@@ -11,10 +11,9 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { parseTree, printParseErrorCode, type ParseError } from 'jsonc-parser';
-import { storeDir } from './data.js';
+import { configDir, storeDir, type EnvLike } from './data.js';
 import { writeFileAtomic } from './store.js';
 
 /** Scope of the config file to edit. */
@@ -49,14 +48,18 @@ export interface ResolvedConfigFile {
  * happens on write). A `--config` path is returned verbatim.
  *
  * @param scope - Which config to target.
+ * @param env - Environment view for the global config directory.
  * @returns The resolved config path and whether the `.jsonc` preference
  * applied.
  */
-export async function resolveConfigFile(scope: ConfigScope): Promise<ResolvedConfigFile> {
+export async function resolveConfigFile(
+  scope: ConfigScope,
+  env: EnvLike = process.env,
+): Promise<ResolvedConfigFile> {
   if (scope.kind === 'custom') {
     return { path: scope.path, jsoncWins: false };
   }
-  const dir = scope.kind === 'global' ? join(homedir(), '.config', 'opencode') : scope.cwd;
+  const dir = scope.kind === 'global' ? configDir(env) : scope.cwd;
   return resolveConfigInDir(dir);
 }
 

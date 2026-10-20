@@ -1,38 +1,59 @@
 /**
- * Client data directory management (`docs/explanation/design.md` §5.8).
+ * Client store directory management (`docs/explanation/design.md` §5.3.2).
  *
  * The client keeps its managed data under
- * `<data-home>/opencode/agent-plugins/` (`data-home` follows opencode's own
- * convention: `$XDG_DATA_HOME`, then `~/.local/share`, `%LOCALAPPDATA%` on
- * Windows). `PLUGIN_DATA` lives at `data/<key>/` **outside** the installed
- * tree so it survives updates and is only removed by the CLI.
+ * `<config-dir>/opencode-agent-plugins/`, where `<config-dir>` is OpenCode's
+ * config directory: `$OPENCODE_CONFIG_DIR` when set, else
+ * `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` (OpenCode uses the
+ * same path on Windows). `PLUGIN_DATA` lives at `data/<key>/` **outside** the
+ * installed tree so it survives updates and is only removed by the CLI.
  */
 
 import { createHash } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
-import { homedir, platform } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** Environment view (injectable for tests). */
 export type EnvLike = Record<string, string | undefined>;
 
-/** Resolves the data home per the opencode convention. */
+/**
+ * Resolves the XDG config home.
+ *
+ * @param env - Environment view for the lookup.
+ * @returns `$XDG_CONFIG_HOME` when set, else `~/.config`.
+ */
 /** @internal Exported for tests only; not part of the public module API. */
-export function dataHome(env: EnvLike = process.env): string {
-  const xdg = env['XDG_DATA_HOME'];
+export function configHome(env: EnvLike = process.env): string {
+  const xdg = env['XDG_CONFIG_HOME'];
   if (xdg !== undefined && xdg !== '') {
     return xdg;
   }
-  if (platform() === 'win32' && env['LOCALAPPDATA'] !== undefined && env['LOCALAPPDATA'] !== '') {
-    return env['LOCALAPPDATA'];
+  return join(homedir(), '.config');
+}
+
+/**
+ * Resolves OpenCode's config directory.
+ *
+ * `$OPENCODE_CONFIG_DIR` replaces the whole directory, exactly as OpenCode
+ * does. Otherwise the `opencode` app directory under the XDG config home is
+ * used.
+ *
+ * @param env - Environment view for the lookup.
+ * @returns The absolute OpenCode config directory.
+ */
+export function configDir(env: EnvLike = process.env): string {
+  const override = env['OPENCODE_CONFIG_DIR'];
+  if (override !== undefined && override !== '') {
+    return override;
   }
-  return join(homedir(), '.local', 'share');
+  return join(configHome(env), 'opencode');
 }
 
 /** Root of the agent-plugins client store. */
 /** @internal Exported for tests only; not part of the public module API. */
 export function storeRoot(env: EnvLike = process.env): string {
-  return join(dataHome(env), 'opencode', 'agent-plugins');
+  return join(configDir(env), 'opencode-agent-plugins');
 }
 
 /** Directory of a store subsection (`installed`, `meta`, `data`, `backups`). */
