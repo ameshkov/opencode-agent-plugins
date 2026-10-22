@@ -1,5 +1,5 @@
 /**
- * OpenCode Agent Plugins entry point (`docs/explanation/design.md` §5.1).
+ * OpenCode Agent Plugins entry point (`docs/explanation/architecture.md`).
  *
  * The plugin is a V2 plugin definition (`{ id, setup }`) with a single
  * `setup`: it resolves each configured source (local paths in place, git
@@ -16,11 +16,12 @@
  * The default export is a plain definition object rather than
  * `Plugin.define(...)`: the V2 host accepts any default definition with an
  * `id` and a `setup` function, `Plugin.define` is an identity function, and
- * avoiding the value import keeps the compiled bundle free of runtime
- * `@opencode/*` dependencies — the package's CLI still installs and runs
- * with no OpenCode dependency at all (AGENTS.md, "Dependency Management").
- * The type-only `Context` import below makes `pnpm typecheck` fail if the V2
- * context ever stops satisfying the registration pipeline's expectations.
+ * avoiding the value import keeps the plugin entry and the shared core free
+ * of runtime `@opencode/*` dependencies. The CLI layer depends on
+ * `@opencode/client` only for the reload call (AGENTS.md, "Dependency
+ * Management"). The type-only `Context` import below makes `pnpm typecheck`
+ * fail if the V2 context ever stops satisfying the registration pipeline's
+ * expectations.
  */
 
 import type { Context } from '@opencode/plugin/promise/plugin';
@@ -51,7 +52,7 @@ const agentPlugins = {
       await registerAgentPlugins(context, parsed, logger);
     } catch (error) {
       // setup must never throw: OpenCode would log a plugin error but
-      // registration is isolated per plugin anyway (§5.1).
+      // registration is isolated per plugin anyway (architecture.md).
       await logger.error('agent plugins registration failed', {
         error: error instanceof Error ? error.message : String(error),
       });

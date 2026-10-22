@@ -5,12 +5,12 @@
  * `hook`-style modes register the plugin by path
  * (`{ package: "/app/plugin", options: { plugins: [...] } }`) so the real V2
  * `setup` transform registration runs. `static` mode writes
- * the equivalent native V2 config directly — the baseline the design proves
- * behaviorally equivalent (docs/explanation/design.md §9.1).
+ * the equivalent native V2 config directly — the baseline the e2e suite proves
+ * behaviorally equivalent (docs/explanation/testing.md).
  *
  * `cli`-style modes register the plugin under its npm package name
  * (`{ package: "opencode-agent-plugins", options: { plugins: [...] } }`) —
- * the V2 entry form the CLI edits (§5.11). The package is installed globally,
+ * the V2 entry form the CLI edits (cli-lifecycle.md). The package is installed globally,
  * into the workspace, and seeded into opencode's npm plugin cache in the
  * image so opencode resolves the name; the plugin entry stays registered
  * while the CLI mutates the `options.plugins` array through config edits.
@@ -27,7 +27,7 @@
  * - `cli`             `opencode-agent-plugins` entry, empty `plugins` (the
  *                     CLI then registers sources into it).
  * - `cli-missing`     entry pre-seeded with a git source that is NOT
- *                     installed (startup warn + skip, §5.3.3).
+ *                     installed (startup warn + skip, sources.md).
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -118,7 +118,7 @@ export async function writeConfig(mode) {
       break;
     case 'negative-stub':
       // The user authored a disabled `echo` server; the plugin's `echo`
-      // server of the same name must be skipped, user config wins (§5.7).
+      // server of the same name must be skipped, user config wins (registration.md).
       base['plugins'] = pathPlugin(['/app/fixtures/my-plugin']);
       base['mcp'] = {
         servers: { echo: { type: 'local', command: ['/bin/true'], disabled: true } },
@@ -127,7 +127,7 @@ export async function writeConfig(mode) {
     case 'skill-collision':
       // The user authored a `skills` entry providing a `hello` skill; the
       // host's skill registry keeps the user's skill over the plugin's
-      // registration of the same name (§3.2, §5.6, §9.1.5).
+      // registration of the same name (registration.md, testing.md).
       base['plugins'] = pathPlugin(['/app/fixtures/my-plugin']);
       base['skills'] = ['/app/fixtures/user-skills'];
       break;

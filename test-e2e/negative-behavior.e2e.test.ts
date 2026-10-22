@@ -1,16 +1,16 @@
 /**
- * Docker e2e tests for the §6 failure taxonomy's most user-visible rows,
+ * Docker e2e tests for the failures.md failure taxonomy's most user-visible rows,
  * anchored against a REAL opencode session (the unit layer covers the full
  * taxonomy against a fake V2 context; this suite pins that a dropped
  * component never breaks the session):
  *
  * - invalid manifest → that plugin is rejected, the other plugin still loads;
  * - mcp.json $schema version mismatch → MCP disabled, skills still load
- *   (§5.9);
+ *   (registration.md);
  * - user-authored `mcp.servers.echo` entry → user config wins, our server is
- *   skipped (§3.2, §5.7);
+ *   skipped (registration.md);
  * - user-authored `skills` entry → the host's skill registry keeps the user's
- *   `hello` skill over the plugin's registration (§3.2, §5.6, §9.1.5).
+ *   `hello` skill over the plugin's registration (registration.md, testing.md).
  *
  * V2 wraps MCP tools in Code Mode by default, so callability is probed with
  * an `execute` call to `tools.echo.echo_ping`.
@@ -55,9 +55,9 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
       await withScenario(await imageTag(), 'negative-mismatch', {}, async (scenario) => {
         const result = await scenario.session();
         const main = mainRequestOf(result.captures);
-        // The plugin's MCP server never reached the host registry (§5.9).
+        // The plugin's MCP server never reached the host registry (registration.md).
         expect((await scenario.mcpList()).data).toEqual([]);
-        // But the skill did reach the session (§5.9 "skills still load").
+        // But the skill did reach the session (registration.md "skills still load").
         expect(systemText(main.request)).toContain('<name>editme</name>');
         expect(assistantReplied(result.messages)).toBe(true);
       });
@@ -83,7 +83,7 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
           expect(servers.map((server) => `${server.name}:${server.status.status}`)).toEqual([
             'echo:disabled',
           ]);
-          expect(scenario.output()).toContain('user config wins');
+          expect(scenario.output()).toContain('the existing registration wins');
           // The plugin itself still loaded its skills.
           expect(systemText(main.request)).toContain('<name>hello</name>');
           expect(assistantReplied(result.messages)).toBe(true);
@@ -101,7 +101,7 @@ describe(`e2e negative: real opencode ${OPENCODE_VERSION} in Docker`, () => {
         const main = mainRequestOf(result.captures);
         const system = systemText(main.request);
         // The user's `hello` skill is still advertised — their `skills`
-        // entry is left untouched (§3.2) ...
+        // entry is left untouched (registration.md) ...
         expect(system).toContain('<name>hello</name>');
         expect(system).toContain('A user-authored hello skill shadowing');
         // ... and V2 enforces config precedence in its skill registry: a

@@ -3,14 +3,15 @@
  */
 
 import { removePlugin } from '../lib/remove.js';
-import { findStoreEntry } from '../lib/store.js';
+import { findStoreEntry, metaPathFor, type StoreEntry } from '../lib/store.js';
 import { dataDirForKey } from '../lib/data.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { printConfigNote } from './output.js';
+import { reloadAfter } from './reload.js';
 import { confirm } from './prompts.js';
 
 /**
- * Runs `remove <name> [--keep-data] [--yes]`.
+ * Runs `remove <name> [--keep-data] [--yes] [--dry-run] [--no-reload]`.
  *
  * @param args - Parsed command line.
  * @returns The process exit code.
@@ -38,10 +39,7 @@ export async function cmdRemove(args: ParsedArgs): Promise<number> {
   const entry = entries[0]!;
 
   if (boolFlag(args.flags, '--dry-run')) {
-    console.log(`would remove ${entry.meta?.source ?? entry.slug} (${entry.slug})`);
-    if (!boolFlag(args.flags, '--keep-data')) {
-      console.log(`would delete PLUGIN_DATA ${dataDirForKey(entry.slug)}`);
-    }
+    printRemovePlan(entry, boolFlag(args.flags, '--keep-data'));
     return 0;
   }
   if (!boolFlag(args.flags, '--yes')) {
@@ -59,10 +57,48 @@ export async function cmdRemove(args: ParsedArgs): Promise<number> {
     keepData: boolFlag(args.flags, '--keep-data'),
   });
   if (!result.ok) {
-    console.error(`error:   ${result.failure.message}`);
-    return 1;
+    return printRemoveFailure(result, args);
   }
   console.log(result.message ?? 'removed.');
   printConfigNote(result);
+  await reloadAfter(args, 'Restart OpenCode to drop its tools and skills.');
   return 0;
+}
+
+/**
+ * Prints a remove failure and returns 1.
+ *
+ * When the config edit already succeeded, the running location still has the
+ * plugin loaded even though the on-disk deletion failed, so print the restart
+ * hint as well.
+ *
+ * @param result - The failed remove result.
+ * @param args - Parsed command line (for the reload opt-out flags).
+ * @returns 1.
+ */
+async function printRemoveFailure(
+  result: { failure: { message: string }; configEdited?: boolean },
+  args: ParsedArgs,
+): Promise<number> {
+  console.error(`error:   ${result.failure.message}`);
+  if (result.configEdited === true) {
+    await reloadAfter(args, 'Restart OpenCode to drop its tools and skills.');
+  }
+  return 1;
+}
+
+/**
+ * Prints the `remove --dry-run` plan.
+ *
+ * @param entry - The resolved store entry.
+ * @param keepData - True when `--keep-data` was given.
+ */
+function printRemovePlan(entry: StoreEntry, keepData: boolean): void {
+  console.log(`would remove ${entry.meta?.source ?? entry.slug} (${entry.slug})`);
+  console.log(`would delete installed tree ${entry.root}`);
+  console.log(`would delete metadata ${metaPathFor(entry.slug)}`);
+  if (!keepData) {
+    console.log(`would delete PLUGIN_DATA ${dataDirForKey(entry.slug)}`);
+  }
+  console.log('dry-run: nothing was written.');
 }

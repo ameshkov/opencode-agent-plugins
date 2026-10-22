@@ -1,5 +1,5 @@
 /**
- * Structured logging for the plugin entry (`docs/explanation/design.md` §5.10).
+ * Structured logging for the plugin entry (`docs/explanation/failures.md`).
  *
  * OpenCode V2's plugin context exposes no logging API, so entries are written
  * to the console (the host captures plugin output — `opencode serve
@@ -69,8 +69,8 @@ const SERVICE = 'opencode-agent-plugins';
 /**
  * Formats one entry as a single line with the level and structured metadata.
  *
- * The design requires the level on the line (`docs/explanation/design.md`
- * §5.10: "level, message, extra"): the console sink routes `debug` and `info`
+ * The logger puts the level on the line (`docs/explanation/failures.md`:
+ * "level, message, extra"): the console sink routes `debug` and `info`
  * to stdout, so the level is otherwise unrecoverable from captured output.
  *
  * @param level - Severity of the entry.

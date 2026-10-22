@@ -1,5 +1,5 @@
 /**
- * `removePlugin` robustness (`docs/explanation/design.md` §5.12.2): a missing config
+ * `removePlugin` robustness (`docs/explanation/cli-lifecycle.md`): a missing config
  * reports "not registered" instead of a JSONC parse error, and a failed store
  * deletion is reported as a structured failure — never a raw rejection —
  * after the config entry has already been removed.
@@ -41,7 +41,7 @@ async function seedEntry(
 const source = 'https://github.com/org/repo.git';
 const slug = 'org-repo';
 
-describe('removePlugin (§5.12.2)', () => {
+describe('removePlugin (cli-lifecycle.md)', () => {
   it('reports "not registered" for a missing config instead of a JSONC error', async () => {
     const store = await tempDir('oap-remove-');
     const env = storeEnv(store.root);
@@ -63,6 +63,40 @@ describe('removePlugin (§5.12.2)', () => {
       await store.cleanup();
     }
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'refuses an unreadable config without deleting the entry',
+    async () => {
+      const store = await tempDir('oap-remove-');
+      const env = storeEnv(store.root);
+      const configPath = join(store.root, 'opencode.json');
+      const before = JSON.stringify({
+        plugins: [{ package: 'opencode-agent-plugins', options: { plugins: [source] } }],
+      });
+      try {
+        await seedEntry(env, slug, source);
+        await writeFile(configPath, before, 'utf8');
+        await chmod(configPath, 0o200);
+        try {
+          const result = await removePlugin(slug, {
+            configScope: { kind: 'custom', path: configPath },
+            env,
+          });
+          expect(result.ok).toBe(false);
+          if (!result.ok) {
+            expect(result.failure.kind).toBe('config-edit');
+            expect(result.failure.message).toContain('config exists but could not be read');
+          }
+        } finally {
+          await chmod(configPath, 0o600);
+        }
+        expect(await readFile(configPath, 'utf8')).toBe(before);
+        expect(await readMeta(slug, env)).not.toBeNull();
+      } finally {
+        await store.cleanup();
+      }
+    },
+  );
 
   it.skipIf(process.getuid?.() === 0)(
     'reports leftover paths when deleting the store entry fails',
@@ -91,6 +125,7 @@ describe('removePlugin (§5.12.2)', () => {
           expect(result.failure.kind).toBe('install-fail');
           expect(result.failure.message).toContain('unregistered from the config');
           expect(result.failure.message).toContain(installedRootFor(slug, env));
+          expect(result.configEdited).toBe(true);
         }
         // The config entry is gone; the failure describes the partial state.
         expect(await readFile(configPath, 'utf8')).not.toContain(source);

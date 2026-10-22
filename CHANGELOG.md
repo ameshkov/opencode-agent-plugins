@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `install`, `remove`, and an `update` that applies at least one change
+  now reload a running OpenCode through the local service API unless
+  `--no-reload` is given. A no-op `update` does not reload. `--dry-run`
+  and `install --no-register` never reload. A missing service or a failed
+  request prints the command's restart hint without changing the exit
+  code.
+
 ### Changed
 
 - The client store now lives under the OpenCode config directory
@@ -42,8 +51,13 @@ and this project adheres to
   into the entry) on the next install write.
 - The CLI's loader-entry bootstrap accepts either the V2 entry or a legacy
   tuple and notes the migration when the legacy form is found.
-- OpenCode's config watcher reloads the plugin after CLI changes; the CLI
-  still prints the restart hint as the deterministic path.
+- OpenCode's config watcher may reload the plugin after CLI changes; the
+  CLI also reloads a running service and still prints the restart hint
+  as the fallback.
+- Made `@opencode/client` a runtime dependency used only by the CLI
+  reload call; the plugin entry still has no runtime OpenCode import.
+- `remove --dry-run` now prints the installed tree and metadata paths it
+  would delete, in addition to the source and `PLUGIN_DATA` directory.
 
 ### Removed
 
@@ -54,12 +68,72 @@ and this project adheres to
 
 ### Fixed
 
+- `update` now removes a stale `.old-<slug>` swap leftover before the swap
+  and rolls back only when the live tree moved. A crash leftover can no
+  longer replace the live tree with an older copy.
+- `prune` now audits the selected config, the global config, and the cwd
+  project config (with `--global` or `--config`) together, so a store entry
+  or data directory that any of them references is kept. It refuses to prune
+  when the selected config is missing, when an existing global or cwd
+  project config is unreadable or not valid JSONC, or when any configured
+  source does not resolve, instead of treating the store as unreferenced. A
+  missing optional config is not an error.
+- `doctor` and `prune` now resolve sources like startup: a local path first
+  (relative to the location directory), then a store slug, then a manifest
+  name. A global relative path resolves against the project cwd, or the
+  process cwd with `--global`, not the config file's directory. An
+  installed-name source and a relative path source are no longer reported as
+  missing and pruned.
+- `doctor` and `prune` now keep the `PLUGIN_DATA` directory named by the slug
+  of a configured but not yet installed git source.
+- `doctor` no longer reports orphaned `PLUGIN_DATA` when any audited config
+  has a source that does not resolve, because the data directory of that
+  source cannot be identified.
+- An unreadable top-level `skills/` directory no longer rejects `install` or
+  `update` with a raw stack: discovery reports a fatal `skills-invalid`
+  failure, install aborts with nothing written, and update keeps the previous
+  install.
+- `doctor`, `list`, `check`, and `update` now treat store metadata with the
+  wrong shape (`{}`, `[]`, a missing `resolvedCommit`) as corrupted instead
+  of crashing or reporting a healthy entry.
+- `prune` now attempts each deletion independently and reports every failure
+  without a stack; the command exits 1 when any item could not be removed.
+- `install` and `update` now fall back to a recursive copy when the staging
+  directory and the store are on different filesystems (`EXDEV`), so a
+  cross-device store no longer fails the move.
+- `list` now prints `<slug>  [corrupted: missing metadata]` for an entry with
+  unreadable metadata instead of failing.
+- `update <name>` and `check <name>` now resolve a manifest name through the
+  store. An unknown name exits with code 1 instead of printing
+  `nothing to update.`
+- `install ~/...` now expands `~`. A `~user/...` source is rejected with the
+  same message as startup.
 - A stray nested `SKILL.md` can no longer be exposed through plugin
   registration: V2 registers skills individually, so only validated
   immediate children are ever registered. Discovery still warns about the
   file as an authoring hint.
 - The nested-`SKILL.md` discovery warning no longer fires for every valid
   skill on Windows: the depth check splits paths on both separators.
+- Rejected a `plugin.json`, `mcp.json`, or `SKILL.md` that resolves
+  outside the plugin root: an escaping manifest is `plugin-missing`, an
+  escaping `mcp.json` disables MCP, and an escaping `SKILL.md` skips that
+  skill.
+- Rejected a stdio `command` token that contains a path separator but
+  does not start with `./`.
+- Required an existing stdio `cwd` target to realpath inside its anchor,
+  and accepted `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` `cwd` values with
+  Windows separators.
+- `update` now exits 0 when nothing needs an update, and exits 1 when any
+  selected entry fails even if another entry updated successfully.
+- `update --yes` now prints `nothing to update.` when no store entry is
+  selected.
+- `update` now restores the previous tree when the metadata write fails
+  and reports the failure instead of rejecting the command.
+- `doctor` and `prune` now keep the `PLUGIN_DATA` directory of a
+  configured path source when its manifest is unreadable.
+- Install-time validation and load-time registration now derive the same
+  `PLUGIN_DATA` key for a path-sourced plugin, so a `cwd` inside
+  `PLUGIN_DATA` validates at install and works at load.
 
 ## [0.1.0] - 2026-09-16
 

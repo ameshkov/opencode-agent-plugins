@@ -16,7 +16,8 @@ import type { ConfigScope } from './config-file.js';
 import { VALID_PLUGIN_JSON } from '../../test/helpers.js';
 
 /**
- * `check`/`update` taxonomy contract (§6 rows 807-808): failure statuses
+ * `check`/`update` taxonomy contract (the `check-unreachable` and `update-ref`
+ * rows of failures.md): failure statuses
  * (`unreachable`, `moved-tag`) carry the matching Failure kind
  * (`check-unreachable`, `update-ref`) so the classification is exercised on
  * both surfaces, while non-failure statuses carry none.
@@ -69,14 +70,14 @@ describe('update status taxonomy', () => {
     await storeHome.cleanup();
   });
 
-  it('reports an unmoved tag as up to date (pinned) without a failure (design §5.11)', async () => {
+  it('reports an unmoved tag as up to date (pinned) without a failure (cli-lifecycle.md)', async () => {
     const statuses = await checkStoreStatuses(env);
     expect(statuses[0]).toMatchObject({ slug, status: 'up-to-date' });
     expect(statuses[0].detail).toContain('pinned at');
     expect(statuses[0].failure).toBeUndefined();
   });
 
-  it('classifies a moved tag as update-ref (§6 row 808)', async () => {
+  it('classifies a moved tag as update-ref (failures.md update-ref row)', async () => {
     await writePluginTree(work, '1.1.0');
     await gitCmd(['add', '-A'], work);
     await gitCmd(['commit', '-m', 'v1.1.0'], work);
@@ -98,7 +99,7 @@ describe('update status taxonomy', () => {
     expect(updated[0].failure?.kind).toBe('update-ref');
   });
 
-  it('classifies an unreachable remote as check-unreachable (§6 row 807)', async () => {
+  it('classifies an unreachable remote as check-unreachable (failures.md check-unreachable row)', async () => {
     const meta = await readMeta(slug, env);
     expect(meta).not.toBeNull();
     await writeMeta(slug, { ...meta!, url: 'file:///definitely/nowhere.git' }, env);

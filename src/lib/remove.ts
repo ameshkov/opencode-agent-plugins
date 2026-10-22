@@ -1,5 +1,5 @@
 /**
- * Plugin remove lifecycle (`docs/explanation/design.md` §5.12.2).
+ * Plugin remove lifecycle (`docs/explanation/cli-lifecycle.md`).
  *
  * Remove resolves a name to exactly one store entry (ambiguous manifest names
  * are refused, never guessed), unregisters the entry's original source from
@@ -8,8 +8,14 @@
  * (kept with `--keep-data`).
  */
 
-import { readFile, rm } from 'node:fs/promises';
-import { configError, configPreferenceNote, resolveConfigFile, saveConfig } from './config-file.js';
+import { rm } from 'node:fs/promises';
+import {
+  configError,
+  configPreferenceNote,
+  readConfigText,
+  resolveConfigFile,
+  saveConfig,
+} from './config-file.js';
 import { applyRemoveSource } from './config-edit.js';
 import { dataDirForKey } from './data.js';
 import {
@@ -75,7 +81,7 @@ async function removeStoreEntry(
   let configNote: string | undefined;
   try {
     const resolved = await resolveConfigFile(options.configScope);
-    const previous = await readFile(resolved.path, 'utf8').catch(() => null);
+    const previous = await readConfigText(resolved.path);
     // A missing or whitespace-only config holds no registration: normalize it
     // to `{}` so a later failure names the real cause ("not registered")
     // instead of reporting an unparsable JSONC document.
@@ -89,11 +95,14 @@ async function removeStoreEntry(
   }
   const leftover = await removeStoreEntryFiles(entry.slug, meta.source, options);
   if (leftover !== null) {
-    return { ok: false, failure: leftover };
+    // The config edit already succeeded, so the source is unregistered even
+    // though the on-disk deletion failed. The caller must still reload or
+    // print the restart hint.
+    return { ok: false, failure: leftover, configEdited: true };
   }
   return {
     ok: true,
-    message: `removed ${meta.source}. Restart OpenCode to drop its tools and skills.`,
+    message: `removed ${meta.source}.`,
     backupPath,
     ...(configNote === undefined ? {} : { configNote }),
   };

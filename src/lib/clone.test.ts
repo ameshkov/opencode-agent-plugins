@@ -67,7 +67,7 @@ async function cleanupStaged(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true });
 }
 
-describe('clone strategy (§5.12.1)', () => {
+describe('clone strategy (cli-lifecycle.md)', () => {
   it('stages a HEAD install at the remote tip, exported without .git', async () => {
     const fx = await fixture();
     try {
@@ -194,7 +194,7 @@ describe('clone strategy (§5.12.1)', () => {
   });
 });
 
-describe('resolveStagedRoot (§5.3.4)', () => {
+describe('resolveStagedRoot (sources.md)', () => {
   let fixture: Awaited<ReturnType<typeof gitBareFixture>>;
   let outside: Awaited<ReturnType<typeof tempDir>>;
   let tip = '';

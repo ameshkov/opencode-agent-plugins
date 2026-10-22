@@ -25,7 +25,10 @@ The package has two parts:
   unsupported `sse` servers are skipped with a warning. MCP tools are
   available through Code Mode by default, like natively-configured
   servers. User-authored configuration always wins: a colliding name is
-  skipped and reported, never overwritten.
+  never overwritten, and the host keeps the user entry. An MCP collision
+  is reported as a warning and the plugin's entry is skipped; a skill
+  collision with user config is invisible to transforms and is not
+  reported by the client.
 - **A CLI** that installs, updates, and removes plugin sources and
   manages the client store.
 
@@ -54,8 +57,9 @@ npx opencode-agent-plugins install \
 
 The CLI fetches the source, validates it, and previews the skills and MCP
 servers that would be registered; on confirmation it registers the source
-in your OpenCode config. Restart OpenCode (or let it reload on its own)
-and the plugin's skill and MCP server are available in your sessions.
+in your OpenCode config and reloads a running OpenCode. If no service is
+running, restart OpenCode and the plugin's skill and MCP server are
+available in your sessions.
 
 For the full walkthrough — including what the output looks like and how
 to verify the result — see the
@@ -69,8 +73,8 @@ to verify the result — see the
   plugin entry, options, sources, and the client store.
 - [CLI reference](./docs/reference/cli.md) — commands, flags, statuses,
   and exit codes.
-- [Design document](./docs/explanation/design.md) — architecture, the
-  behavior contract, and the failure taxonomy.
+- [Explanations](./docs/explanation/index.md) — architecture, sources,
+  registration, the CLI lifecycle, reload, failures, and testing.
 - Guides:
     - [Debug the plugin in a live OpenCode](./docs/guides/debugging.md)
     - [E2E testing in Docker](./docs/guides/e2e-testing.md)

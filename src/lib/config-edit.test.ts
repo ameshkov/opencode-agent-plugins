@@ -7,6 +7,7 @@ import {
   applyRemoveSource,
   configHasLegacyTuple,
   configHasPluginEntry,
+  configSourceListOf,
   configSourcesOf,
   probeConfig,
 } from './config-edit.js';
@@ -105,7 +106,7 @@ describe('applyRegisterSource', () => {
     expect(() => JSON.parse(edited)).not.toThrow();
   });
 
-  it('creates a config from an empty file (§5.11)', () => {
+  it('creates a config from an empty file (cli-lifecycle.md)', () => {
     const edited = applyRegisterSource('', './agent-plugins/my-plugin');
     expect(() => JSON.parse(edited)).not.toThrow();
     expect(configSourcesOf(edited)).toEqual(['./agent-plugins/my-plugin']);
@@ -315,6 +316,51 @@ describe('configSourcesOf', () => {
   it('reads single-string sources from both entry forms', () => {
     expect(configSourcesOf(WITH_STRING_SOURCE)).toEqual(['./a']);
     expect(configSourcesOf(WITH_LEGACY_STRING_SOURCE)).toEqual(['./a']);
+  });
+});
+
+describe('configSourceListOf', () => {
+  it('accepts a valid config with trailing commas', () => {
+    const text = `{
+      "plugins": [
+        { "package": "opencode-agent-plugins", "options": { "plugins": ["./a",], }, },
+      ],
+    }`;
+    expect(configSourceListOf(text)).toEqual({ sources: ['./a'], problem: null });
+  });
+
+  it('reports a config that does not parse as JSONC', () => {
+    expect(configSourceListOf('{ invalid')).toEqual({
+      sources: [],
+      problem: 'config is not a valid JSONC document',
+    });
+  });
+
+  it('reports a non-object root', () => {
+    expect(configSourceListOf('[]')).toEqual({
+      sources: [],
+      problem: 'config root must be an object',
+    });
+  });
+
+  it('reports wrong-shaped plugin arrays and loader entries', () => {
+    expect(configSourceListOf('{"plugins": "not-an-array"}').problem).toBe(
+      'config "plugins" must be an array',
+    );
+    expect(
+      configSourceListOf('{"plugins": [{"package": "opencode-agent-plugins", "options": []}]}')
+        .problem,
+    ).toBe('loader entry "options" must be an object');
+    expect(
+      configSourceListOf(
+        '{"plugins": [{"package": "opencode-agent-plugins", "options": {"plugins": 1}}]}',
+      ).problem,
+    ).toBe('loader entry "options.plugins" must be a string or an array');
+    expect(
+      configSourceListOf(
+        '{"plugins": [{"package": "opencode-agent-plugins", "options": {"plugins": [1]}}]}',
+      ).problem,
+    ).toBe('loader entry "options.plugins" must contain only strings');
   });
 });
 

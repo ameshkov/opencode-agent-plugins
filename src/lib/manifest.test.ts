@@ -1,3 +1,4 @@
+import { symlink, writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { loadManifest, validateManifest, schemaVersion } from './manifest.js';
 import { tempDir, VALID_PLUGIN_JSON } from '../../test/helpers.js';
@@ -88,7 +89,6 @@ describe('loadManifest', () => {
   it('reads a manifest from disk', async () => {
     const dir = await tempDir('oap-manifest-');
     try {
-      const { writeFile } = await import('node:fs/promises');
       await writeFile(`${dir.root}/plugin.json`, VALID_PLUGIN_JSON, 'utf8');
       const result = await loadManifest(dir.root);
       expect(result.ok).toBe(true);
@@ -116,7 +116,6 @@ describe('loadManifest', () => {
   it('reports an unparsable manifest as plugin-missing', async () => {
     const dir = await tempDir('oap-manifest-');
     try {
-      const { writeFile } = await import('node:fs/promises');
       await writeFile(`${dir.root}/plugin.json`, '{ nope', 'utf8');
       const result = await loadManifest(dir.root);
       expect(result.ok).toBe(false);
@@ -124,6 +123,23 @@ describe('loadManifest', () => {
         expect(result.failure.kind).toBe('plugin-missing');
       }
     } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('rejects a plugin.json that symlinks outside the plugin root', async () => {
+    const dir = await tempDir('oap-manifest-');
+    const outside = await tempDir('oap-manifest-outside-');
+    try {
+      await writeFile(`${outside.root}/plugin.json`, VALID_PLUGIN_JSON, 'utf8');
+      await symlink(`${outside.root}/plugin.json`, `${dir.root}/plugin.json`);
+      const result = await loadManifest(dir.root);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.failure.kind).toBe('plugin-missing');
+      }
+    } finally {
+      await outside.cleanup();
       await dir.cleanup();
     }
   });

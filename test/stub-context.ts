@@ -5,7 +5,7 @@
  * skills/MCP registry with the same semantics as the real transform editors
  * (edits build on the baseline + earlier registrations) and an async `list()`
  * baseline read. For skills the baseline models other plugins' registrations
- * only — config skills are invisible to transforms (§9.1.5); for MCP it also
+ * only — config skills are invisible to transforms (testing.md); for MCP it also
  * models config-defined servers, which are visible. Test support code — must
  * NOT end in `.test.ts`.
  */
@@ -60,7 +60,7 @@ export interface StubContextOptions {
   options?: Record<string, unknown>;
   /**
    * Skills already registered by other opencode plugins at the location.
-   * Config skills are invisible to transforms (§9.1.5), so they cannot be
+   * Config skills are invisible to transforms (testing.md), so they cannot be
    * seeded here; for MCP, `mcp` seeds config-defined servers, which are.
    */
   skills?: Skill.Info[];

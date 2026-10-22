@@ -1,3 +1,5 @@
+import { symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { discoverMcp, isValidServerName, sanitizeServerName } from './mcp.js';
 import { validateHeaders, validateRemoteUrl } from './remote.js';
@@ -139,6 +141,26 @@ describe('discoverMcp', () => {
     }
   });
 
+  it('disables MCP when mcp.json symlinks outside the plugin root (failures.md)', async () => {
+    const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
+    const outside = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'mcp.json': mcpJson({ echo: { type: 'stdio', command: './bin/serve.js' } }),
+    });
+    try {
+      await symlink(join(outside.root, 'mcp.json'), join(plugin.root, 'mcp.json'));
+      const result = await discoverMcp(plugin.root, PLUGIN_SCHEMA, DATA);
+      expect(result.status).toBe('disabled');
+      expect(result.reason).toContain('outside the plugin root');
+      expect(result.servers).toEqual([]);
+      expect(result.failures.map((f) => f.kind)).toEqual(['mcp-invalid']);
+      expect(result.failures[0]?.extra).toMatchObject({ section: 'failures.md' });
+    } finally {
+      await plugin.cleanup();
+      await outside.cleanup();
+    }
+  });
+
   it('skips invalid individual entries and keeps valid ones', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
@@ -160,7 +182,7 @@ describe('discoverMcp', () => {
     }
   });
 
-  it('classifies path escapes as path-escape (§5.5), others as server-invalid', async () => {
+  it('classifies path escapes as path-escape (failures.md), others as server-invalid', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
       'mcp.json': mcpJson({
@@ -173,7 +195,7 @@ describe('discoverMcp', () => {
       expect(result.servers).toEqual([]);
       const escape = result.failures.find((f) => f.kind === 'path-escape');
       expect(escape?.message).toContain('escapes the plugin root');
-      expect(escape?.extra).toMatchObject({ server: 'escape', section: '§5.5' });
+      expect(escape?.extra).toMatchObject({ server: 'escape', section: 'failures.md' });
       expect(result.failures.filter((f) => f.kind === 'server-invalid')).toEqual([
         expect.objectContaining({ extra: { server: 'badCwd' } }),
       ]);

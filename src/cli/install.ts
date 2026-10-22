@@ -2,12 +2,13 @@
  * `install` command: fetch → validate → preview → confirm → register.
  */
 
-import { rm } from 'node:fs/promises';
 import { applyInstall, prepareInstall } from '../lib/install.js';
+import { removeTree } from '../lib/move.js';
 import type { InstallPlan, OpResult } from '../lib/install.js';
 import { probeConfig } from '../lib/config-edit.js';
 import { boolFlag, scopeOf, type ParsedArgs } from './args.js';
 import { printConfigNote } from './output.js';
+import { reloadAfter } from './reload.js';
 import { confirm } from './prompts.js';
 
 /** Warning printed when the config has no `opencode-agent-plugins` entry. */
@@ -21,7 +22,7 @@ const LEGACY_NOTE =
 
 /**
  * Runs `install <source> [--ref <ref>] [--global|--config <path>] [--yes]
- * [--dry-run] [--no-register]`.
+ * [--dry-run] [--no-register] [--no-reload]`.
  *
  * @param args - Parsed command line.
  * @returns The process exit code.
@@ -32,30 +33,51 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     console.error('usage: opencode-agent-plugins install <source> [options]');
     return 1;
   }
-  const ref = args.flags.get('--ref');
-  const prepared = await prepareInstall(
-    source,
-    process.cwd(),
-    process.env,
-    typeof ref === 'string' && ref !== '' ? ref : undefined,
-  );
-  if (!prepared.ok || prepared.plan === undefined) {
-    return printFailure(prepared);
+  let plan: InstallPlan | undefined;
+  try {
+    const ref = args.flags.get('--ref');
+    const prepared = await prepareInstall(
+      source,
+      process.cwd(),
+      process.env,
+      typeof ref === 'string' && ref !== '' ? ref : undefined,
+    );
+    if (!prepared.ok || prepared.plan === undefined) {
+      return printFailure(prepared);
+    }
+    plan = prepared.plan;
+    return await runInstallPlan(args, plan);
+  } catch (error) {
+    // A filesystem or staging error must not escape as a stack trace: drop
+    // the throwaway staging tree and report the message like any other
+    // install failure (cli-lifecycle.md).
+    if (plan !== undefined) {
+      await abortStagedPlan(plan);
+    }
+    console.error(`error:   ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
   }
-  const plan = prepared.plan;
+}
+
+/**
+ * Previews and applies a prepared install.
+ *
+ * @param args - Parsed command line.
+ * @param plan - The prepared plan.
+ * @returns The process exit code.
+ */
+async function runInstallPlan(args: ParsedArgs, plan: InstallPlan): Promise<number> {
   printPlan(plan);
 
   if (plan.validated.fatal) {
-    // §5.12.1: failure at any validation step aborts with nothing changed on
+    // cli-lifecycle.md: failure at any validation step aborts with nothing changed on
     // disk — before confirmation, and dropping the throwaway staging dir.
     await abortStagedPlan(plan);
     return 1;
   }
 
   if (boolFlag(args.flags, '--dry-run')) {
-    await abortStagedPlan(plan);
-    console.log('dry-run: nothing was written.');
-    return 0;
+    return abortDryRun(plan);
   }
 
   if (!boolFlag(args.flags, '--no-register') && !(await ensureLoaderEntry(args))) {
@@ -63,13 +85,9 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  if (!boolFlag(args.flags, '--yes')) {
-    const ok = await confirm('Install this plugin?', false);
-    if (!ok) {
-      console.error('aborted.');
-      await abortStagedPlan(plan);
-      return 1;
-    }
+  if (!boolFlag(args.flags, '--yes') && !(await confirmInstall())) {
+    await abortStagedPlan(plan);
+    return 1;
   }
   const result = await applyInstall(plan, {
     configScope: scopeOf(args),
@@ -79,6 +97,12 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
     return printFailure(result);
   }
   printInstallResult(result, plan, args);
+  await reloadAfter(
+    args,
+    'Restart OpenCode to use it.',
+    undefined,
+    'Add the config snippet above, then restart OpenCode to use it.',
+  );
   return 0;
 }
 
@@ -113,7 +137,7 @@ function printInstallResult(
  * OpenCode never loads the loader plugin, so the config edit would be
  * useless and `doctor` would report the source as unreferenced. The CLI
  * therefore warns and, in interactive mode, asks the user to add the entry
- * before registering (§5.11). `--yes` auto-adds (print-only warning);
+ * before registering (cli-lifecycle.md). `--yes` auto-adds (print-only warning);
  * declining aborts the install with nothing written.
  *
  * @param args - Parsed command line (for the config scope and `--yes`).
@@ -151,8 +175,35 @@ async function ensureLoaderEntry(args: ParsedArgs): Promise<boolean> {
  */
 async function abortStagedPlan(plan: InstallPlan): Promise<void> {
   if (plan.kind === 'git') {
-    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true });
+    // Best-effort: the abort must not turn into a raw filesystem error.
+    await removeTree(plan.stagingDir ?? plan.root).catch(() => undefined);
   }
+}
+
+/**
+ * Aborts a `--dry-run` after the preview: drops the staging dir and reports
+ * that nothing was written.
+ *
+ * @param plan - The prepared plan.
+ * @returns The process exit code (0).
+ */
+async function abortDryRun(plan: InstallPlan): Promise<number> {
+  await abortStagedPlan(plan);
+  console.log('dry-run: nothing was written.');
+  return 0;
+}
+
+/**
+ * Asks for install confirmation.
+ *
+ * @returns True when the user accepted; false after printing the abort line.
+ */
+async function confirmInstall(): Promise<boolean> {
+  const ok = await confirm('Install this plugin?', false);
+  if (!ok) {
+    console.error('aborted.');
+  }
+  return ok;
 }
 
 /** Prints the install preview (manifest, skills, servers, warnings). */

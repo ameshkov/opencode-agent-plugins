@@ -26,7 +26,7 @@ describe('createLogger', () => {
     expect(entries).toHaveLength(3);
   });
 
-  it('writes one console line with the level and trailing metadata (§5.10)', async () => {
+  it('writes one console line with the level and trailing metadata (failures.md)', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
       await createLogger('debug').info('plugin "hello" registered', { skills: 1 });

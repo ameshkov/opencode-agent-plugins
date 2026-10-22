@@ -1,10 +1,11 @@
 /**
  * Docker e2e tests for remote (streamable-http) MCP registration and for the
- * behaviors the design delegates to opencode's MCP client and pins here
- * (`docs/explanation/design.md` §7 "Delegated-to-host requirements"): header forwarding,
- * client-generated header precedence, redirect header forwarding, and
- * bare-command PATH search. The design states these are asserted in E2E, not
- * unit tests (§5.7, §7); this suite is the tripwire.
+ * behaviors OpenCode delegates to its MCP client and pins here
+ * (`docs/explanation/architecture.md`, "Delegated-to-host requirements"):
+ * header forwarding, client-generated header precedence, redirect header
+ * forwarding, and bare-command PATH search. The client asserts these in E2E,
+ * not unit tests (registration.md, architecture.md); this suite is the
+ * tripwire.
  *
  * V2 wraps MCP tools in Code Mode by default, so callability is probed with
  * `execute` calls (`tools.http.ping`, `tools.redirect.ping`,
@@ -18,7 +19,7 @@
  * - `redirect` → `/redirect` answers 307 to `/mcp-final` (spec §7.2.1);
  * - `pathtool` → stdio server via a BARE command name resolved on PATH;
  * - `sse`      → unsupported transport, skipped by the loader;
- * - `badurl`   → non-loopback http URL, invalid per §5.7, skipped.
+ * - `badurl`   → non-loopback http URL, invalid per registration.md, skipped.
  *
  * The remote server prints every request as a `REMOTE:` line and embeds the
  * current request's path/headers into each tool result, so assertions run on
@@ -65,7 +66,7 @@ describe(`e2e remote: real opencode ${OPENCODE_VERSION} in Docker`, () => {
           // Plugin-configured headers are forwarded by opencode's HTTP stack.
           expect(resultText).toContain('R_TOKEN=e2e-token');
 
-          // Client-generated header precedence (§7): the configured
+          // Client-generated header precedence (architecture.md): the configured
           // user-agent is what the opencode HTTP stack sent — pinned here
           // because the rule is owned by the client, not reimplemented by us.
           expect(resultText).toContain('R_UA=plugin-ua');

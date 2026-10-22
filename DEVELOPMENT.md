@@ -82,5 +82,5 @@ full gate before pushing, since CI enforces it anyway. The hook needs
 - [CI reference](./docs/reference/ci.md) — jobs, pins, and the release
   pipeline.
 - [AGENTS.md](./AGENTS.md) — code guidelines and project structure.
-- [`docs/explanation/design.md`](./docs/explanation/design.md) — the
-  authoritative design.
+- [Explanations](./docs/explanation/index.md) — architecture, sources,
+  registration, the CLI lifecycle, reload, failures, and testing.

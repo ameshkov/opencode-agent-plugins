@@ -1,27 +1,29 @@
 /**
- * Plugin install lifecycle (`docs/explanation/design.md` §5.12.1).
+ * Plugin install lifecycle (`docs/explanation/cli-lifecycle.md`).
  *
  * Install fetches the source (git URL only — path sources are used in place),
  * validates the staged copy with the full pipeline, previews what will be
  * registered, then swaps it into the store and registers the source in the
- * OpenCode config. Removal lives in `remove.ts` (§5.12.2).
+ * OpenCode config. Removal lives in `remove.ts` (cli-lifecycle.md).
  */
 
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { gitAvailable, resolveRemoteCommit } from './git.js';
 import { resolveStagedRoot, stageTree } from './clone.js';
 import {
   configError,
   configPreferenceNote,
+  readConfigText,
   resolveConfigFile,
   saveConfig,
   type ConfigScope,
 } from './config-file.js';
 import { applyRegisterSource } from './config-edit.js';
-import { dataDirForKey, storeDir } from './data.js';
+import { dataKeyForSlug } from './data.js';
 import { installedRootFor, readMeta, removeMeta, writeMeta, type StoreMeta } from './store.js';
-import { parseSource, type GitSource } from './resolve.js';
+import { moveTree, removeTree } from './move.js';
+import { parseSource, expandHome, type GitSource } from './resolve.js';
 import { validatePluginTree, type ValidatedPlugin } from './validate.js';
 import { failure, type Failure } from './errors.js';
 
@@ -59,7 +61,7 @@ export interface InstallPlan {
 /** Result of preparation/application. */
 export type OpResult =
   | { ok: true; plan?: InstallPlan; message?: string; backupPath?: string; configNote?: string }
-  | { ok: false; failure: Failure; detail?: string };
+  | { ok: false; failure: Failure; detail?: string; configEdited?: boolean };
 
 /**
  * Prepares an install: resolves the source, stages the git tree, validates
@@ -100,8 +102,17 @@ async function preparePathInstall(
   workspaceDir: string,
   env: Record<string, string | undefined>,
 ): Promise<OpResult> {
+  const expanded = expandHome(pathSource);
+  if (expanded === null) {
+    return {
+      ok: false,
+      failure: failure('install-fail', `source "${raw}": ~user/... paths are not supported`, {
+        source: raw,
+      }),
+    };
+  }
   // `resolve` (not `join`) so an absolute source resets the workspace prefix.
-  const root = resolve(workspaceDir, pathSource);
+  const root = resolve(workspaceDir, expanded);
   const exists = await stat(root).catch(() => null);
   if (exists === null || !exists.isDirectory()) {
     return {
@@ -109,7 +120,7 @@ async function preparePathInstall(
       failure: failure('install-fail', `path source not found: ${pathSource}`, { source: raw }),
     };
   }
-  const validated = await validatePluginTree(root, storeDir('data', env));
+  const validated = await validatePluginTree(root, env);
   return { ok: true, plan: { raw, kind: 'path', root, validated } };
 }
 
@@ -140,7 +151,7 @@ async function prepareGitInstall(
   if (!staged.ok) {
     return { ok: false, failure: staged.failure };
   }
-  const validated = await validatePluginTree(staged.root, dataDirForKey(source.slug, env));
+  const validated = await validatePluginTree(staged.root, env, dataKeyForSlug(source.slug));
   return {
     ok: true,
     plan: {
@@ -156,7 +167,7 @@ async function prepareGitInstall(
   };
 }
 
-/** Resolves, stages and derives the plugin root of a git source (§5.3.4). */
+/** Resolves, stages and derives the plugin root of a git source (sources.md). */
 async function stageGitSource(
   raw: string,
   source: GitSource,
@@ -174,7 +185,7 @@ async function stageGitSource(
   }
   const derived = await resolveStagedRoot(staged.dir, source.subdir);
   if (!derived.ok) {
-    await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(staged.dir).catch(() => undefined);
     return { ok: false, failure: failure('install-fail', derived.error, { source: raw }) };
   }
   return {
@@ -213,8 +224,8 @@ export async function applyInstall(
     configNote = registered.configNote;
   }
   const message = options.noRegister
-    ? `validated ${plan.raw} (local path, not registered; add the config snippet below, then restart OpenCode to use it).`
-    : `registered ${plan.raw} (local path). Restart OpenCode to use it.`;
+    ? `validated ${plan.raw} (local path, not registered; add the config snippet below).`
+    : `registered ${plan.raw} (local path).`;
   return {
     ok: true,
     message,
@@ -223,7 +234,7 @@ export async function applyInstall(
 }
 
 /**
- * Aborts a fatally-invalid install with nothing changed on disk (§5.12.1),
+ * Aborts a fatally-invalid install with nothing changed on disk (cli-lifecycle.md),
  * mirroring the update path (`swapUpdate`), which refuses the new tree for
  * the same reason. Git plans hold a throwaway staging dir that is removed;
  * path sources are used in place, so their root must never be touched.
@@ -233,7 +244,7 @@ export async function applyInstall(
  */
 async function abortFatalInstall(plan: InstallPlan): Promise<OpResult> {
   if (plan.kind === 'git') {
-    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(plan.stagingDir ?? plan.root).catch(() => undefined);
   }
   return {
     ok: false,
@@ -278,8 +289,8 @@ async function applyGitInstall(
     ? ` ${plan.validated.manifest.version}`
     : '';
   const message = options.noRegister
-    ? `installed ${plan.validated.manifest.name}${manifestVersion} (not registered; add the config snippet below, then restart OpenCode to use it).`
-    : `installed ${plan.validated.manifest.name}${manifestVersion}. Restart OpenCode to use it.`;
+    ? `installed ${plan.validated.manifest.name}${manifestVersion} (not registered; add the config snippet below).`
+    : `installed ${plan.validated.manifest.name}${manifestVersion}.`;
   return {
     ok: true,
     message,
@@ -289,6 +300,9 @@ async function applyGitInstall(
 
 /**
  * Moves the staged tree to `installed/<slug>`, refusing an existing entry.
+ *
+ * Uses an atomic rename when staging and the store are on one filesystem and
+ * the copy fallback in `move.ts` when they are not (`EXDEV`).
  *
  * @param plan - The prepared plan.
  * @param slug - Store slug.
@@ -305,14 +319,14 @@ async function moveStagedTree(
   await mkdir(join(installed, '..'), { recursive: true });
   const already = await stat(installed).catch(() => null);
   if (already !== null) {
-    await rm(plan.stagingDir ?? plan.root, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(plan.stagingDir ?? plan.root).catch(() => undefined);
     return failure('install-fail', `store entry already exists: ${slug}`);
   }
-  await rename(plan.root, installed);
+  await moveTree(plan.root, installed);
   if (plan.stagingDir !== undefined && plan.stagingDir !== plan.root) {
     // Throwaway staging clone: a failed cleanup must not abort a valid
     // install (the OS temp dir reaps leftovers).
-    await rm(plan.stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(plan.stagingDir).catch(() => undefined);
   }
   return null;
 }
@@ -361,7 +375,7 @@ async function writeInstallMeta(
 }
 
 /**
- * Rolls back a git install's store entry when a later step failed (§5.12.1).
+ * Rolls back a git install's store entry when a later step failed (cli-lifecycle.md).
  *
  * Best-effort: the original failure is what the user needs to see, so a
  * failed rollback is left for `doctor` to report rather than replacing that
@@ -383,7 +397,7 @@ async function rollbackGitInstall(
 async function registerConfig(source: string, options: LifecycleOptions): Promise<OpResult> {
   try {
     const resolved = await resolveConfigFile(options.configScope);
-    const previous = await readFile(resolved.path, 'utf8').catch(() => null);
+    const previous = await readConfigText(resolved.path);
     const edited = applyRegisterSource(previous ?? '', source);
     const { backupPath } = await saveConfig(resolved.path, edited, options.env, previous);
     const note = configPreferenceNote(resolved);

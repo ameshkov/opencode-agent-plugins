@@ -1,5 +1,5 @@
 /**
- * Plugin source parsing and startup resolution (`docs/explanation/design.md` §5.3).
+ * Plugin source parsing and startup resolution (`docs/explanation/sources.md`).
  *
  * Source grammar:
  *
@@ -108,7 +108,7 @@ function gitOf(raw: string, urlBase: string): ParsedSource {
 }
 
 /**
- * Splits a `#fragment` into its ref/subdir parts (§5.3.4).
+ * Splits a `#fragment` into its ref/subdir parts (sources.md).
  *
  * `<ref>`, `<ref>:<subdir>`, and `:<subdir>` are valid; an empty fragment,
  * an empty subdir, or a malformed ref/subdir throws before any network call.
@@ -149,7 +149,7 @@ function isValidRef(ref: string): boolean {
 }
 
 /**
- * Validates a `:subdir` fragment (§5.3.4): one or more `/`-separated
+ * Validates a `:subdir` fragment (sources.md): one or more `/`-separated
  * segments, none empty/`.`/`..`, no `\` and no `:`.
  *
  * @param subdir - The text after `:`.
@@ -164,11 +164,11 @@ function isValidSubdir(subdir: string): boolean {
     .every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
-/** Maximum store-slug length (§5.3.4); truncation preserves the subdir hash. */
+/** Maximum store-slug length (sources.md); truncation preserves the subdir hash. */
 const MAX_SLUG_LENGTH = 64;
 
 /**
- * Derives a store slug from a git URL and optional monorepo subdir (§5.3.4).
+ * Derives a store slug from a git URL and optional monorepo subdir (sources.md).
  *
  * Without a subdir this is the URL-only slug as before. With one, the
  * canonical subdir is lowercased, non-`[a-z0-9-]` characters become `-`, the
@@ -176,7 +176,7 @@ const MAX_SLUG_LENGTH = 64;
  * subdir is appended. The hash is always part of a subdir slug, so distinct
  * subdirs keep distinct slugs even when their flattened forms collide
  * (`a/b`, `a-b`, and `a_b` all flatten to `a-b`); subdirs that differ only
- * by case deliberately share a slug (§10). Results longer than 64 characters
+ * by case deliberately share a slug (sources.md). Results longer than 64 characters
  * are truncated, preserving the hash suffix.
  *
  * @param url - Normalized git URL.
@@ -235,7 +235,7 @@ function baseSlugOf(url: string): string {
  * - git URL: looked up in the client store by slug; missing → warn+skip
  *   failure, corrupted meta → error.
  * - malformed ref (`#ref` with whitespace, empty ref): reported as a
- *   failure, never thrown — the plugin setup must not throw (§5.1).
+ *   failure, never thrown — the plugin setup must not throw (architecture.md).
  *
  * @param raw - Source string.
  * @param workspaceDir - Workspace directory for relative paths.
@@ -254,7 +254,7 @@ export async function resolveSource(
     const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
-      failure: failure('source-missing', message, { source: raw, section: '§5.3.1' }),
+      failure: failure('source-missing', message, { source: raw, section: 'sources.md' }),
     };
   }
   if (parsed.kind === 'git') {
@@ -276,7 +276,7 @@ async function resolveGitSource(
       ok: false,
       failure: failure('source-missing', `source "${raw}" is not installed in the client store`, {
         source: raw,
-        section: '§5.3.3',
+        section: 'sources.md',
       }),
     };
   }
@@ -287,7 +287,7 @@ async function resolveGitSource(
       failure: failure(
         'source-corrupt',
         `store entry "${source.slug}" is corrupted (missing metadata)`,
-        { slug: source.slug, section: '§5.3.2' },
+        { slug: source.slug, section: 'sources.md' },
       ),
     };
   }
@@ -329,7 +329,7 @@ async function resolveStoreName(
       failure: failure(
         'source-missing',
         `source "${raw}" is not installed (no path, no store entry)`,
-        { source: raw, section: '§5.3.3' },
+        { source: raw, section: 'sources.md' },
       ),
     };
   }
@@ -372,7 +372,7 @@ async function resolveStoreName(
  * @param value - The path to expand.
  * @returns The expanded path, or null for unexpandable `~user/...` forms.
  */
-function expandHome(value: string): string | null {
+export function expandHome(value: string): string | null {
   if (value === '~' || value.startsWith('~/') || value.startsWith('~\\')) {
     return join(homedir(), value.slice(1).replace(/^[\\/]/, ''));
   }

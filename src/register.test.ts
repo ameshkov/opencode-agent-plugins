@@ -5,7 +5,7 @@ import { logsWithBoundary, runRegistration, stubContext } from '../test/stub-con
 import { skillMd, tempDir, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
 
 describe('registerAgentPlugins', () => {
-  it('registers a skills dir that ships extra skill resources (§5.6)', async () => {
+  it('registers a skills dir that ships extra skill resources (registration.md)', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
       'skills/hello/SKILL.md': skillMd('hello', 'Greets the world.'),
@@ -27,7 +27,7 @@ describe('registerAgentPlugins', () => {
     }
   });
 
-  it('reports valid absences (missing skills/ and mcp.json) at debug level (§6)', async () => {
+  it('reports valid absences (missing skills/ and mcp.json) at debug level (failures.md)', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     try {
       const stub = stubContext();
@@ -53,7 +53,7 @@ describe('registerAgentPlugins', () => {
     }
   });
 
-  it('reports unimplemented extension namespaces at debug level (§6)', async () => {
+  it('reports unimplemented extension namespaces at debug level (failures.md)', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': JSON.stringify({
         ...JSON.parse(VALID_PLUGIN_JSON),
@@ -73,7 +73,7 @@ describe('registerAgentPlugins', () => {
     }
   });
 
-  it('denies a skills/ dir that symlinks outside the plugin root (§5.5)', async () => {
+  it('denies a skills/ dir that symlinks outside the plugin root (failures.md)', async () => {
     const outside = await tempDir('oap-outside-');
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     try {
@@ -137,6 +137,23 @@ describe('registerAgentPlugins', () => {
       expect(stub.logs.some((entry) => entry.message.includes('invalid git ref'))).toBe(true);
     } finally {
       await good.cleanup();
+    }
+  });
+
+  it('reports a source configured twice as source-duplicate (failures.md)', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+    });
+    try {
+      const stub = stubContext();
+      await runRegistration(stub, { plugins: [plugin.root, plugin.root] });
+      const duplicate = logsWithBoundary(stub, 'source-duplicate');
+      expect(duplicate).toHaveLength(1);
+      expect(duplicate[0]!.level).toBe('warn');
+      expect(duplicate[0]!.message).toContain('already-registered');
+    } finally {
+      await plugin.cleanup();
     }
   });
 });

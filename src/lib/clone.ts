@@ -1,5 +1,6 @@
 /**
- * Tree staging from git sources (`docs/explanation/design.md` §5.12.1, §5.3.2).
+ * Tree staging from git sources (`docs/explanation/cli-lifecycle.md`,
+ * `docs/explanation/sources.md`).
  *
  * The clone strategy is shallow-first at the resolved commit: `--depth 1`
  * where the transport allows fetching the resolved SHA, falling back to a
@@ -14,9 +15,9 @@ import { isFullSha, runGit, toGitCliUrl } from './git.js';
 import { isInside } from './paths.js';
 
 /**
- * Stages a plugin tree at `commit` (exported copy, `.git` removed, §5.3.2).
+ * Stages a plugin tree at `commit` (exported copy, `.git` removed, sources.md).
  *
- * The clone is tried shallow-first (§5.12.1): `--depth 1` at the resolved
+ * The clone is tried shallow-first (cli-lifecycle.md): `--depth 1` at the resolved
  * commit where the transport allows a raw-SHA fetch, then at the named ref,
  * then a full clone + checkout. The tree always lands on `commit` (the
  * `ls-remote` result), so the recorded `resolvedCommit` and the installed
@@ -44,7 +45,7 @@ export async function stageTree(
 }
 
 /**
- * Derives the plugin root inside a staged clone (`docs/explanation/design.md` §5.3.4).
+ * Derives the plugin root inside a staged clone (`docs/explanation/sources.md`).
  *
  * Without a subdir the staged clone root is the plugin root. With one, the
  * selected directory is realpath-resolved and must exist, be a directory,

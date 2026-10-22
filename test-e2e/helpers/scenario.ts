@@ -21,7 +21,12 @@
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import { OpenCode, type McpListOutput, type SkillListOutput } from '@opencode/client';
+import {
+  OpenCode,
+  type McpListOutput,
+  type PluginListOutput,
+  type SkillListOutput,
+} from '@opencode/client';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { API_PORT, PLUGIN_ID, SERVER_PASSWORD } from './constants.js';
 import { capturesOf, type Capture, type SessionRun } from './capture.js';
@@ -34,7 +39,7 @@ const BASE_ENV = { HOME: '/app/opencode-home', E2E_SERVER_PASSWORD: SERVER_PASSW
 
 /** Options for the fake model's tool call and container-level extras. */
 export interface ScenarioOptions {
-  /** Tool name the fake model emits on the first main completion. */
+  /** Tool name the fake model emits on the first main completion of each session. */
   emitToolCall?: string;
   /** Code Mode code the fake model sends when `emitToolCall` is `execute`. */
   emitToolCode?: string;
@@ -48,6 +53,15 @@ export interface McpExpectation {
   name: string;
   /** Expected connection status (defaults to `connected`). */
   status?: string;
+}
+
+/** Options for {@link Scenario.session}. */
+export interface SessionOptions {
+  /**
+   * Wait for the loader plugin before prompting (default `true`). Set this to
+   * `false` only for a session that runs after the loader entry was removed.
+   */
+  expectLoader?: boolean;
 }
 
 /**
@@ -83,9 +97,11 @@ const READY_TIMEOUT_MS = 120_000;
  * the server's tools — the scenario fails with `Unknown tool
  * '<server>.<tool>'` even though the server is connected and reports its
  * tools. The registry has no read API, so the gate requires the expected
- * state to hold for several times that debounce instead.
+ * state to hold for several times that debounce instead. A CLI reload
+ * reconnects servers and refetches their catalogs, so the hold must also
+ * cover that reconnect.
  */
-const MCP_TOOL_REGISTRY_SETTLE_MS = 500;
+const MCP_TOOL_REGISTRY_SETTLE_MS = 2000;
 
 /** Runs `docker` and resolves; rejects loudly on CLI failure. */
 async function docker(args: string[]): Promise<void> {
@@ -202,11 +218,14 @@ export class Scenario {
    * @param promptText - Text of the prompt message.
    * @param expectMcp - MCP servers the session must see registered before the
    * prompt (defaults to the scenario mode's set; `cli` phases override).
+   * @param options - Session readiness options; `expectLoader` defaults to
+   * `true`. Pass `{ expectLoader: false }` after the loader entry was removed.
    * @returns The session run (messages + captures).
    */
   async session(
     promptText = 'ping',
     expectMcp: McpExpectation[] = MODE_EXPECTATIONS[this.mode] ?? [],
+    options: SessionOptions = {},
   ): Promise<SessionRun> {
     await this.ready();
     const client = this.api();
@@ -216,7 +235,7 @@ export class Scenario {
       { location: { directory: '/app/workspace' } },
       { signal: AbortSignal.timeout(90_000) },
     );
-    await this.waitForReady(expectMcp);
+    await this.waitForReady(expectMcp, options.expectLoader ?? true);
     const offset = this.buffer.length;
     await client.session.prompt(
       { sessionID: session.id, text: promptText },
@@ -245,6 +264,15 @@ export class Scenario {
    */
   async mcpList(): Promise<McpListOutput> {
     return this.api().mcp.list();
+  }
+
+  /**
+   * Active plugins at the workspace location (`plugin.list`).
+   *
+   * @returns The plugin list response.
+   */
+  async pluginList(): Promise<PluginListOutput> {
+    return this.api().plugin.list();
   }
 
   /**
@@ -347,11 +375,11 @@ export class Scenario {
   }
 
   /**
-   * Waits until the location is registered and usable: the loader plugin is
-   * active (all modes except `static`, which hand-writes the config) and the
-   * session's expected MCP servers are present with their status (and no
-   * server is still `pending`), and that state has held for
-   * {@link MCP_TOOL_REGISTRY_SETTLE_MS}. V2 activates plugins and connects
+   * Waits until the location is registered and usable: when `expectLoader` is
+   * true, the loader plugin is active (all modes except `static`, which
+   * hand-writes the config), the session's expected MCP servers are present
+   * with their status (and no server is still `pending`), and that state has
+   * held for {@link MCP_TOOL_REGISTRY_SETTLE_MS}. V2 activates plugins and connects
    * servers asynchronously after the location loads, so a prompt sent too
    * early would miss the registered tools and skills. With no expected
    * servers the registry must be empty instead — never "ready" merely
@@ -359,11 +387,12 @@ export class Scenario {
    * assertions then report the actual state.
    *
    * @param expectMcp - Servers that must be present with their status.
+   * @param expectLoader - Whether the loader plugin must be active first.
    */
-  private async waitForReady(expectMcp: McpExpectation[]): Promise<void> {
+  private async waitForReady(expectMcp: McpExpectation[], expectLoader: boolean): Promise<void> {
     const client = this.api();
     const deadline = Date.now() + READY_TIMEOUT_MS;
-    if (this.mode !== 'static') {
+    if (this.mode !== 'static' && expectLoader) {
       for (;;) {
         const plugins = (await client.plugin.list()).data;
         if (plugins.some((plugin) => plugin.id === PLUGIN_ID)) {

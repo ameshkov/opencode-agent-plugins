@@ -6,6 +6,7 @@ import type { Context } from '@opencode/plugin/promise/plugin';
 import agentPlugins from './index.js';
 import { stubContext } from '../test/stub-context.js';
 import { skillMd, tmpPlugin, VALID_PLUGIN_JSON } from '../test/helpers.js';
+import { dataDirForKey, pathDataHash } from './lib/data.js';
 
 /** Silences the entry's own console logger (it cannot be injected). */
 function silenceConsole(): void {
@@ -71,6 +72,37 @@ describe('agentPlugins plugin definition (V2)', () => {
         // PLUGIN_DATA dir must be created eagerly for stdio servers.
         expect(await stat(mcp.environment!['PLUGIN_DATA']!)).toBeDefined();
       }
+    } finally {
+      await plugin.cleanup();
+      await configHome.cleanup();
+    }
+  });
+
+  it('does not create PLUGIN_DATA for a plugin without a stdio server', async () => {
+    silenceConsole();
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'mcp.json': JSON.stringify({
+        $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+        mcpServers: {
+          remote: { type: 'streamable-http', url: 'https://example.com/mcp' },
+        },
+      }),
+    });
+    const configHome = await tmpPlugin({ x: 'x' });
+    vi.stubEnv('XDG_CONFIG_HOME', configHome.root);
+    vi.stubEnv('OPENCODE_CONFIG_DIR', '');
+    try {
+      const root = await realpath(plugin.root);
+      const stub = stubContext({ options: { plugins: [plugin.root] } });
+      await runSetup(stub);
+
+      expect(stub.registeredMcp.get('remote')?.type).toBe('remote');
+      // No stdio server means no PLUGIN_DATA directory, not even an empty one.
+      const dataDir = dataDirForKey(`hello-${pathDataHash(root)}`, {
+        XDG_CONFIG_HOME: configHome.root,
+      });
+      await expect(stat(dataDir)).rejects.toThrow();
     } finally {
       await plugin.cleanup();
       await configHome.cleanup();

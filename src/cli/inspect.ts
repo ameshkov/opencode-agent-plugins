@@ -2,7 +2,7 @@
  * `list`, `doctor`, and `prune` commands.
  */
 
-import { pruneDoctor, runDoctor } from '../lib/doctor.js';
+import { pruneDoctor, runDoctor, type PruneFailure } from '../lib/doctor.js';
 import { listInstalled, manifestNameOf } from '../lib/store.js';
 import { checkStoreStatuses } from '../lib/update.js';
 import type { UpdateStatus } from '../lib/update.js';
@@ -12,7 +12,7 @@ import { confirm } from './prompts.js';
 
 /**
  * Runs `list` — installed plugins with source, ref, subdir, commit, version,
- * and update status (§5.11).
+ * and update status (cli-lifecycle.md).
  *
  * The status column resolves the recorded ref remotely with the same engine
  * as `check`; without the `git` binary or network access the command still
@@ -45,7 +45,7 @@ export async function cmdList(): Promise<number> {
   return 0;
 }
 
-/** Maps a check status to the `list` status column label (§5.11). */
+/** Maps a check status to the `list` status column label (cli-lifecycle.md). */
 function statusLabel(status: UpdateStatus): string {
   switch (status.status) {
     case 'up-to-date':
@@ -79,11 +79,25 @@ export async function cmdDoctor(args: ParsedArgs): Promise<number> {
 /**
  * Runs `prune [--yes]` — removes the unreferenced/stale findings of doctor.
  *
+ * When any audited config cannot be read or parsed, or a configured source
+ * does not resolve, its references are unknown: pruning would risk deleting a
+ * store entry that the config still uses. The command prints the report and
+ * exits 1 without deleting anything.
+ *
  * @param args - Parsed command line.
  * @returns The process exit code.
  */
 export async function cmdPrune(args: ParsedArgs): Promise<number> {
   const report = await runDoctor(scopeOf(args));
+  if (!report.referencesComplete) {
+    printReport(report);
+    console.error(
+      'error:   cannot read the selected config, an existing global config, or the cwd ' +
+        'project config, or a configured source does not resolve; refusing to prune ' +
+        '(nothing was deleted).',
+    );
+    return 1;
+  }
   const removable = report.items.filter(
     (item) => !item.referenced && item.kind !== 'no-store-entry',
   );
@@ -99,9 +113,13 @@ export async function cmdPrune(args: ParsedArgs): Promise<number> {
       return 1;
     }
   }
-  const pruned = await pruneDoctor(report);
-  console.log(`pruned: ${pruned.join(', ') || 'nothing'}`);
-  return 0;
+  const result = await pruneDoctor(report);
+  const failures: PruneFailure[] = result.failures;
+  for (const failure of failures) {
+    console.error(`error:   failed to prune ${failure.id}: ${failure.message}`);
+  }
+  console.log(`pruned: ${result.pruned.join(', ') || 'nothing'}`);
+  return failures.length > 0 ? 1 : 0;
 }
 
 /** Prints a doctor report; returns 2 when it found issues. */
@@ -111,9 +129,8 @@ function printReport(report: DoctorReport): number {
     return 0;
   }
   for (const item of report.items) {
-    console.log(
-      `[${item.kind}] ${item.id} — ${item.detail}${item.referenced ? ' (referenced)' : ''}`,
-    );
+    const referenced = item.referenced && item.kind !== 'config-missing';
+    console.log(`[${item.kind}] ${item.id} — ${item.detail}${referenced ? ' (referenced)' : ''}`);
   }
   return 2;
 }

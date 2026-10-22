@@ -8,12 +8,13 @@
  * - prints the same body to stdout as a `CAPTURE:` line, so the test can
  *   assert on the request (tools, `<available_skills>`) from container logs
  *   without needing a filesystem channel;
- * - when `EMIT_TOOL_CALL` is set to a tool name, the FIRST main chat
- *   completion returns a tool call for it (so opencode executes the MCP
- *   server and the test can assert on the resulting tool round trip);
- *   subsequent completions return plain text so the agent loop terminates.
- *   For `EMIT_TOOL_CALL=execute`, `EMIT_TOOL_CODE` carries the Code Mode code
- *   to run (the V2 default wraps MCP tools in Code Mode).
+ * - when `EMIT_TOOL_CALL` is set to a tool name, the first main chat
+ *   completion of each session returns a tool call for it (so opencode
+ *   executes the MCP server and the test can assert on the resulting tool
+ *   round trip); the completion after the tool result returns plain text so
+ *   the agent loop terminates. For `EMIT_TOOL_CALL=execute`,
+ *   `EMIT_TOOL_CODE` carries the Code Mode code to run (the V2 default wraps
+ *   MCP tools in Code Mode).
  *
  * Exported for the container bootstrap (`bootstrap.mjs`); may also be run
  * directly for local debugging.
@@ -35,7 +36,7 @@ const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) =
  * @property {string} [captureFile] - JSONL file captured requests are
  * appended to.
  * @property {string} [emitToolCall] - Tool name emitted on the first main
- * completion.
+ * completion of each session.
  */
 
 /**
@@ -54,8 +55,6 @@ export function startFakeModel(options = {}) {
   const emitToolCode = options.emitToolCode ?? process.env['EMIT_TOOL_CODE'] ?? '';
   mkdirSync(dirname(captureFile), { recursive: true });
 
-  let toolCallEmitted = false;
-
   /** Serializes a request body to the capture file and stdout. */
   function capture(parsed) {
     const line = JSON.stringify(parsed);
@@ -73,12 +72,28 @@ export function startFakeModel(options = {}) {
     );
   }
 
-  /** Tool call for the first *main* completion when EMIT_TOOL_CALL is set. */
-  function toolCallFor() {
-    if (toolCallEmitted || emitToolCall === '') {
+  /** Tool call for the first *main* completion of a session. */
+  function toolCallFor(parsed) {
+    if (emitToolCall === '') {
       return undefined;
     }
-    toolCallEmitted = true;
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+    // A session's first completion has no tool result and no earlier
+    // assistant tool call. The completion after the tool result gets plain
+    // text so the agent loop terminates.
+    if (messages.some((message) => message.role === 'tool')) {
+      return undefined;
+    }
+    if (
+      messages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          Array.isArray(message.tool_calls) &&
+          message.tool_calls.length > 0,
+      )
+    ) {
+      return undefined;
+    }
     return {
       id: 'call_e2e_1',
       type: 'function',
@@ -179,7 +194,7 @@ export function startFakeModel(options = {}) {
         }
         capture(parsed);
         const model = parsed.model ?? 'test-model';
-        const toolCall = isTitleRequest(parsed) ? undefined : toolCallFor();
+        const toolCall = isTitleRequest(parsed) ? undefined : toolCallFor(parsed);
         if (parsed.stream === true) {
           streamCompletion(res, model, toolCall);
           return;

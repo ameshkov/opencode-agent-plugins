@@ -80,6 +80,23 @@ describe('discoverSkills', () => {
     }
   });
 
+  it('keeps a dot-dot-prefixed skill directory alongside valid skills', async () => {
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/..foo/SKILL.md': skillMd('..foo', 'Name is invalid, path is not an escape'),
+      'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
+    });
+    try {
+      const result = await discoverSkills(plugin.root);
+      // `..foo` is a child name, not a parent segment: it must not drop the
+      // whole `skills/` directory (isInside regression).
+      expect(result.skills.map((s) => s.name)).toEqual(['hello']);
+      expect(result.failures.map((f) => f.kind)).toEqual(['skills-invalid']);
+    } finally {
+      await plugin.cleanup();
+    }
+  });
+
   it('warns about nested SKILL.md files deeper than skills/<name>/', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
@@ -98,7 +115,7 @@ describe('discoverSkills', () => {
     }
   });
 
-  it('ignores non-SKILL.md resource files inside a skill dir (§5.6)', async () => {
+  it('ignores non-SKILL.md resource files inside a skill dir (registration.md)', async () => {
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
       'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
@@ -127,7 +144,7 @@ describe('discoverSkills', () => {
     }
   });
 
-  it('rejects a skills/ dir that symlinks outside the plugin root (§5.5)', async () => {
+  it('rejects a skills/ dir that symlinks outside the plugin root (failures.md)', async () => {
     const outside = await tempDir('oap-outside-');
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     try {
@@ -135,7 +152,7 @@ describe('discoverSkills', () => {
       await symlink(outside.root, join(plugin.root, 'skills'));
       const result = await discoverSkills(plugin.root);
       expect(result.failures.map((f) => f.kind)).toEqual(['path-escape']);
-      expect(result.failures[0]?.extra).toMatchObject({ section: '§5.5' });
+      expect(result.failures[0]?.extra).toMatchObject({ section: 'failures.md' });
       expect(result.skills).toEqual([]);
     } finally {
       await plugin.cleanup();
@@ -158,7 +175,7 @@ describe('discoverSkills', () => {
     }
   });
 
-  it('rejects a skill subdirectory that symlinks outside the plugin root (§5.5)', async () => {
+  it('rejects a skill subdirectory that symlinks outside the plugin root (failures.md)', async () => {
     const outside = await tempDir('oap-outside-');
     const plugin = await tmpPlugin({
       'plugin.json': VALID_PLUGIN_JSON,
@@ -170,7 +187,7 @@ describe('discoverSkills', () => {
       const result = await discoverSkills(plugin.root);
       expect(result.failures.map((f) => f.kind)).toEqual(['path-escape']);
       if (result.failures[0]?.extra) {
-        expect(result.failures[0].extra).toMatchObject({ skill: 'evil', section: '§5.5' });
+        expect(result.failures[0].extra).toMatchObject({ skill: 'evil', section: 'failures.md' });
       }
       expect(result.skills).toEqual([]);
     } finally {
@@ -179,7 +196,27 @@ describe('discoverSkills', () => {
     }
   });
 
-  it('accepts a skill subdirectory that symlinks inside the plugin root (§5.5)', async () => {
+  it('skips a SKILL.md that symlinks outside the plugin root (failures.md)', async () => {
+    const outside = await tempDir('oap-outside-');
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'skills/hello/notes.md': 'x',
+      'skills/keep/SKILL.md': skillMd('keep', 'Keep'),
+    });
+    try {
+      await writeFile(join(outside.root, 'SKILL.md'), skillMd('hello', 'Outside'), 'utf8');
+      await symlink(join(outside.root, 'SKILL.md'), join(plugin.root, 'skills/hello/SKILL.md'));
+      const result = await discoverSkills(plugin.root);
+      expect(result.skills.map((s) => s.name)).toEqual(['keep']);
+      expect(result.failures.map((f) => f.kind)).toEqual(['path-escape']);
+      expect(result.failures[0]?.extra).toMatchObject({ skill: 'hello', section: 'failures.md' });
+    } finally {
+      await plugin.cleanup();
+      await outside.cleanup();
+    }
+  });
+
+  it('accepts a skill subdirectory that symlinks inside the plugin root (failures.md)', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     try {
       await mkdir(join(plugin.root, 'real'), { recursive: true });

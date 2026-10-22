@@ -30,7 +30,7 @@ describe('parseSource', () => {
     }
   });
 
-  it('parses subdir fragments with and without a ref (§5.3.4)', () => {
+  it('parses subdir fragments with and without a ref (sources.md)', () => {
     const pinned = parseSource('https://github.com/org/repo.git#v1.2.0:packages/linter');
     if (pinned.kind === 'git') {
       expect(pinned.source.ref).toBe('v1.2.0');
@@ -56,7 +56,7 @@ describe('parseSource', () => {
     expect(() => parseSource('https://github.com/org/repo.git#a..b')).toThrow('invalid git ref');
   });
 
-  it('rejects malformed subdirs before any network call (§5.3.4)', () => {
+  it('rejects malformed subdirs before any network call (sources.md)', () => {
     for (const fragment of [
       '#:',
       '#a:',
@@ -88,13 +88,13 @@ describe('slugOf', () => {
     expect(slugOf('git@github.com:org/repo.git')).toBe('org-repo');
   });
 
-  it('flattens a subdir into the slug and appends a disambiguating hash (§5.3.4)', () => {
+  it('flattens a subdir into the slug and appends a disambiguating hash (sources.md)', () => {
     const slug = slugOf('https://github.com/org/repo.git', 'packages/My_App');
     expect(slug.startsWith('org-repo-packages-my-app-')).toBe(true);
     expect(slug.slice(-8)).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  it('keeps lossy subdir flattenings distinct (§5.3.4)', () => {
+  it('keeps lossy subdir flattenings distinct (sources.md)', () => {
     const url = 'https://github.com/org/repo.git';
     const slugs = new Set([
       slugOf(url, 'packages/a/b'),
@@ -104,7 +104,7 @@ describe('slugOf', () => {
     expect(slugs.size).toBe(3);
   });
 
-  it('treats case-only subdir variants as the same slug (§10)', () => {
+  it('treats case-only subdir variants as the same slug (sources.md)', () => {
     const url = 'https://github.com/org/repo.git';
     expect(slugOf(url, 'Packages/ALPHA')).toBe(slugOf(url, 'packages/alpha'));
   });
@@ -114,7 +114,7 @@ describe('slugOf', () => {
     expect(slugOf(url, '')).toBe(slugOf(url));
   });
 
-  it('truncates long slugs and keeps distinct subdirs distinct (§5.3.4)', () => {
+  it('truncates long slugs and keeps distinct subdirs distinct (sources.md)', () => {
     const url = 'https://github.com/very-long-org-name/very-long-repo-name.git';
     const first = slugOf(url, 'packages/some-extremely-long-plugin-directory-name');
     const second = slugOf(url, 'packages/another-extremely-long-plugin-dir-name');
@@ -180,6 +180,24 @@ describe('resolveSource', () => {
     }
   });
 
+  it('reports an installed entry with missing metadata as source-corrupt (failures.md)', async () => {
+    const home = await tempDir('oap-env-');
+    try {
+      const env = storeEnv(home.root);
+      const slug = 'org-repo';
+      await mkdir(installedRootFor(slug, env), { recursive: true });
+      const result = await resolveSource(slug, '/', env);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.failure.kind).toBe('source-corrupt');
+        expect(result.failure.level).toBe('error');
+        expect(result.failure.message).toContain('missing metadata');
+      }
+    } finally {
+      await home.cleanup();
+    }
+  });
+
   it('reports a malformed ref as a failure instead of throwing', async () => {
     const result = await resolveSource('git+https://github.com/org/repo.git#bad ref', '/');
     expect(result.ok).toBe(false);
@@ -194,7 +212,7 @@ describe('resolveSource', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('resolves an installed subdir entry and carries its subdir (§5.3.4)', async () => {
+  it('resolves an installed subdir entry and carries its subdir (sources.md)', async () => {
     const home = await tempDir('oap-env-');
     try {
       const env = storeEnv(home.root);

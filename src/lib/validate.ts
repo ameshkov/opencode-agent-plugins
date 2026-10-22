@@ -1,5 +1,5 @@
 /**
- * Shared plugin-tree validation pipeline (`docs/explanation/design.md` §5.12.1).
+ * Shared plugin-tree validation pipeline (`docs/explanation/cli-lifecycle.md`).
  *
  * The CLI validates exactly what the plugin will load: manifest → skills →
  * MCP, against the same `src/lib/` modules. `install` can therefore never
@@ -7,7 +7,9 @@
  * the CLI prints before asking for confirmation.
  */
 
+import { realpath } from 'node:fs/promises';
 import type { Failure } from './errors.js';
+import { dataDirForKey, dataKeyForPath, type EnvLike } from './data.js';
 import { loadManifest, type ManifestData } from './manifest.js';
 import { discoverSkills } from './skills.js';
 import { discoverMcp, type McpServerSpec } from './mcp.js';
@@ -38,14 +40,22 @@ export interface ValidatedPlugin {
 /**
  * Validates a plugin tree and builds the registration preview.
  *
+ * The `PLUGIN_DATA` directory is derived the same way registration derives it
+ * (`data.ts`), so install/update validation and a later load agree on the
+ * `cwd` containment boundary. Git callers pass the store slug as `key`; path
+ * callers pass nothing and get the `<name>-<hash8>` key of the realpathed root.
+ *
  * @param pluginRoot - Absolute plugin root.
- * @param dataDir - Absolute `PLUGIN_DATA` path used for cwd checks.
- * @returns The validation result (never throws; parse failures are reported
- * via {@link ValidatedPlugin.fatal}).
+ * @param env - Environment view for store-root resolution.
+ * @param key - Explicit `PLUGIN_DATA` key (git store slug); derived when absent.
+ * @returns The validation result (never throws; parse failures and an
+ * unreadable `skills/` directory are reported via
+ * {@link ValidatedPlugin.fatal}).
  */
 export async function validatePluginTree(
   pluginRoot: string,
-  dataDir: string,
+  env: EnvLike = process.env,
+  key?: string,
 ): Promise<ValidatedPlugin> {
   const manifestResult = await loadManifest(pluginRoot);
   if (!manifestResult.ok) {
@@ -58,6 +68,9 @@ export async function validatePluginTree(
     };
   }
   const warnings = [...manifestResult.warnings];
+  const resolvedRoot = await realpath(pluginRoot).catch(() => pluginRoot);
+  const dataKey = key ?? dataKeyForPath(resolvedRoot, manifestResult.manifest.name);
+  const dataDir = dataDirForKey(dataKey, env);
 
   const skillResult = await discoverSkills(pluginRoot);
   warnings.push(...skillResult.failures);
@@ -66,7 +79,10 @@ export async function validatePluginTree(
   const mcpResult = await discoverMcp(pluginRoot, manifestResult.manifest.$schema, dataDir);
   warnings.push(...mcpResult.failures);
   const servers = previewOf(mcpResult.servers);
-  const fatal = mcpResult.status === 'disabled' || warnings.some((w) => w.level === 'error');
+  const fatal =
+    mcpResult.status === 'disabled' ||
+    skillResult.fatal ||
+    warnings.some((w) => w.level === 'error');
 
   return { manifest: manifestResult.manifest, skills, servers, warnings, fatal };
 }

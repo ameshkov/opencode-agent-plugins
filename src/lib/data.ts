@@ -1,5 +1,5 @@
 /**
- * Client store directory management (`docs/explanation/design.md` §5.3.2).
+ * Client store directory management (`docs/explanation/sources.md`).
  *
  * The client keeps its managed data under
  * `<config-dir>/opencode-agent-plugins/`, where `<config-dir>` is OpenCode's
@@ -85,19 +85,34 @@ export async function ensureDataDir(key: string, env: EnvLike = process.env): Pr
 }
 
 /**
- * Computes the data key for a path-sourced plugin: `<name>-<hash8>`.
+ * Computes the `hash8` suffix that identifies a path-sourced plugin instance.
  *
  * `hash8` is the first 8 hex chars of the SHA-256 of the plugin root
- * (realpathed — identity is the hash, the name is a debugging hint only, and
- * a renamed plugin keeps its data via the hash).
+ * (realpathed). {@link dataKeyForPath} appends it to the manifest name, and
+ * `doctor` uses it to protect a configured path source's data directory even
+ * when the manifest is unreadable.
+ *
+ * @param pluginRoot - Absolute, realpathed plugin root.
+ * @returns The eight-character instance hash.
+ */
+export function pathDataHash(pluginRoot: string): string {
+  return createHash('sha256').update(pluginRoot).digest('hex').slice(0, 8);
+}
+
+/**
+ * Computes the data key for a path-sourced plugin: `<name>-<hash8>`.
+ *
+ * The key is `<manifest-name>-<hash8>`: the hash identifies the instance, but
+ * the name is part of the key, so a manifest rename changes the key and starts
+ * a fresh data dir. `doctor` protects both dirs by the shared hash suffix while
+ * the source stays configured.
  *
  * @param pluginRoot - Absolute, realpathed plugin root.
  * @param manifestName - Plugin name from the manifest.
  * @returns The data key for the plugin instance.
  */
 export function dataKeyForPath(pluginRoot: string, manifestName: string): string {
-  const hash = createHash('sha256').update(pluginRoot).digest('hex').slice(0, 8);
-  return `${manifestName}-${hash}`;
+  return `${manifestName}-${pathDataHash(pluginRoot)}`;
 }
 
 /**

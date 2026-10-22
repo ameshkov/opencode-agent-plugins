@@ -28,20 +28,19 @@ v1.0.0, and registers their skills and MCP servers into OpenCode. The same
 npm package also exposes a CLI that manages the plugin store and the
 user's OpenCode config.
 
-The authoritative design is
-[`docs/explanation/design.md`](./docs/explanation/design.md) — read the
-relevant section before implementing or changing a component. Behavior
-described there (failure taxonomy, containment rules, placeholder
-expansion, options schema) must match the code; when they diverge, the
-design is the contract and the code must be fixed.
+The explanation pages under [`docs/explanation/`](./docs/explanation/index.md)
+describe how the client works and why. They describe the current state
+of the code; they are not a contract and do not bind future changes.
+Code and tests define actual behavior. `docs/reference/*` is normative
+for the public surface (CLI flags, configuration, statuses, exit codes).
 
 ## Technical Context
 
 - **Language/Version**: TypeScript 7.0.2 (strict, ESM,
   `module: Node16`), compiled with `tsc` to `build/`; no bundler.
 - **Primary Dependencies**: `ajv` (schema validation), `zod` (options
-  parsing), `jsonc-parser` (config edits); `@opencode/plugin` and
-  `@opencode/client` are type-only devDependencies.
+  parsing), `jsonc-parser` (config edits), `@opencode/client` (the CLI's
+  reload call); `@opencode/plugin` is a type-only devDependency.
 - **Storage**: the filesystem — the client store under
   `<config-dir>/opencode-agent-plugins/` (the OpenCode config directory:
   `$OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then
@@ -54,9 +53,10 @@ design is the contract and the code must be fixed.
 - **Project Type**: CLI tool + library — one npm package with two entry
   points.
 - **Performance Goals**: N/A — startup must stay fast and offline.
-- **Constraints**: no network access at startup; the compiled `build/`
-  must keep zero runtime `@opencode/*` imports; the plugin must never
-  throw during load.
+- **Constraints**: no network access at startup; everything under
+  `build/` must keep zero runtime `@opencode/*` imports, except
+  `@opencode/client` under `build/cli/`; the plugin must never throw during
+  load.
 - **Scale/Scope**: one OpenCode location with a handful of configured
   sources; the CLI manages a single user's store and config.
 
@@ -72,11 +72,12 @@ opencode-agent-plugins/
 │   ├── register-skills.ts  # skills registration: collide-skip, ctx.skill.transform adds
 │   ├── register-types.ts   # shared RegistrationContext/RegisterState types
 │   ├── cli/                # `opencode-agent-plugins` binary: entry, flags, prompts,
-│   │                         install/remove/update/inspect commands
+│   │                         reload, install/remove/update/inspect commands
 │   ├── lib/                # shared core — no @opencode/* runtime deps; one module per
-│   │                         concern (resolve, git, clone, install, remove, update,
-│   │                         config-*, store, manifest, mcp, skills, frontmatter,
-│   │                         paths, data, remote, doctor, validate, errors)
+│   │                         concern (resolve, git, clone, install, remove, update-*,
+│   │                         config-*, store, manifest, mcp, mcp-schema, skills,
+│   │                         frontmatter, paths, data, remote, doctor-*, move,
+│   │                         validate, errors)
 │   ├── schemas/            # vendored Agent Plugins schemas (committed, never fetched)
 │   └── utils/              # dependency-free helpers (logger)
 ├── scripts/                # build/dev gates: check-runtime-imports, check-failure-kinds,
@@ -88,7 +89,8 @@ opencode-agent-plugins/
 │   ├── tutorials/          # getting-started walkthrough
 │   ├── guides/             # debugging, e2e testing, Docker checks
 │   ├── reference/          # CLI, configuration, CI, code conventions
-│   └── explanation/        # design.md — the authoritative design
+│   └── explanation/        # architecture, sources, registration, CLI lifecycle,
+│                             reload, failures, testing, future work
 ├── Dockerfile              # host-tool-free quality gate (docs/guides/docker-checks.md)
 └── .github/workflows/      # CI and release (docs/reference/ci.md)
 ```
@@ -104,10 +106,13 @@ importing downward only:
 
 Neither entry imports the other. `src/lib/` imports only `node:*`, Ajv,
 Zod, and `jsonc-parser` — never `@opencode/*`, not even for types — so
-the CLI runs with no OpenCode dependency and install-time validation is
-byte-identical to load-time validation. The boundary is pinned by
+the shared core runs with no OpenCode dependency and install-time
+validation is byte-identical to load-time validation. The CLI layer may
+import `@opencode/client` for the reload call; the plugin entry and
+`src/lib/` may not. The boundary is pinned by
 `scripts/check-runtime-imports.ts` in `pnpm build`. Layer and packaging
-details: [`docs/explanation/design.md`](./docs/explanation/design.md) §4.
+details:
+[`docs/explanation/architecture.md`](./docs/explanation/architecture.md).
 
 ## Build And Test Commands
 
@@ -163,7 +168,15 @@ Design for a CLI tool that doubles as a library consumed by OpenCode:
 - The plugin entry runs inside OpenCode's host process: keep module scope
   side-effect-free, `setup` deterministic, and never let it throw.
 - Never touch the network or the filesystem outside the store and config
-  paths the CLI is explicitly managing; the plugin entry never fetches.
+  paths the CLI is explicitly managing. Git-backed commands (`install`
+  from a URL, `check`, `update`) use the network for git. The only
+  non-git network call is the local OpenCode reload endpoint
+  (`src/cli/reload.ts`); it is best-effort, uses the service registration
+  file, and never logs credentials. The plugin entry never fetches.
+- After a successful `install`, `remove`, or an `update` that applies at
+  least one change, reload a running OpenCode unless `--no-reload` is given.
+  A no-op `update` does not reload. `install --no-register` and `--dry-run`
+  never reload. A failed reload is a warning, not a command failure.
 - Keep startup fast — no heavy initialization at module load.
 
 ### Architecture
@@ -206,20 +219,26 @@ layers MUST NOT import from each other arbitrarily; shared logic lives in
   collision checks and reports live inside the transform callback, never
   after the `await`.
 - User-authored config always wins: a colliding name is skipped and
-  reported, never overwritten.
+  never overwritten. An MCP collision with user config is reported as a
+  warning; a skill collision with user config is invisible to transforms
+  and not reported by the client.
 - No network access at startup: sources that cannot be resolved without
   fetching are skipped with a warning.
 - `setup` never throws: every per-plugin failure is caught, mapped
   through the failure taxonomy, and logged; only the narrowest unit is
   dropped.
 - The entry imports `@opencode/plugin` type-only and default-exports a
-  plain `{ id, setup }` object, so `build/` keeps zero runtime
-  `@opencode/*` imports.
+  plain `{ id, setup }` object, so the plugin entry keeps zero runtime
+  `@opencode/*` imports. `@opencode/client` is allowed only under
+  `build/cli/`, for the reload call.
 - No new `as unknown as` cast sites: the sanctioned list is in the
   [code conventions reference](./docs/reference/code-conventions.md).
 
-Details: [`docs/explanation/design.md`](./docs/explanation/design.md) §5
-(components), §6 (failure taxonomy), §9.1.5 (skill precedence).
+Details: [`docs/explanation/registration.md`](./docs/explanation/registration.md)
+(components and precedence),
+[`docs/explanation/failures.md`](./docs/explanation/failures.md) (failure
+taxonomy), and [`docs/explanation/testing.md`](./docs/explanation/testing.md)
+(host findings).
 
 ### Code Quality
 
@@ -262,15 +281,20 @@ Details: [`docs/explanation/design.md`](./docs/explanation/design.md) §5
 - Any test that exercises a real OpenCode binary MUST run inside Docker —
   never install or run OpenCode on the host. The e2e suite lives in
   `test-e2e/` ([guide](./docs/guides/e2e-testing.md)); the testing
-  strategy is design §9.
+  strategy is in
+  [`docs/explanation/testing.md`](./docs/explanation/testing.md).
+- The reload path MUST be tested without a real OpenCode process: use a
+  temporary `XDG_STATE_HOME` and a stub HTTP service, as in
+  `src/cli/reload.test.ts`.
 
 ### Dependency Management
 
 - Pin all dependency versions explicitly — no `^` or `~`.
-- `@opencode/plugin` and `@opencode/client` are type-only
-  devDependencies; the compiled `build/` must keep zero runtime
-  `@opencode/*` imports (enforced by `scripts/check-runtime-imports.ts`
-  in `pnpm build`).
+- `@opencode/plugin` is a type-only devDependency. `@opencode/client` is
+  a runtime dependency used only by the CLI layer for the reload call.
+  The plugin entry and `src/lib/` must keep zero runtime `@opencode/*`
+  imports; `scripts/check-runtime-imports.ts` in `pnpm build` allows
+  `@opencode/client` only under `build/cli/`.
 - Keep the OpenCode version in sync across `package.json` and
   `OPENCODE_VERSION` in `.github/workflows/ci.yml`; the npm packages and
   the binary MAY differ by a patch but MUST stay on the same minor line.
@@ -288,8 +312,9 @@ Details: [`docs/explanation/design.md`](./docs/explanation/design.md) §5
   structure MUST update the affected documents in the same change
   (`README.md`, `DEVELOPMENT.md`, the pages under `docs/`, and the
   Project Structure section above).
-- Public behavior MUST match `docs/explanation/design.md`; when they
-  diverge, the design is the contract and the code must be fixed.
+- Code and tests define actual behavior. `docs/reference/*` is normative
+  for the public surface (CLI, configuration) and MUST be updated in the
+  same change.
 - Runtime configuration (plugin entry options, CLI flags, store env
   vars) is documented in the
   [configuration reference](./docs/reference/configuration.md) and the

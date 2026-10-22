@@ -1,16 +1,16 @@
-// Enforces the project's zero-runtime-imports invariant on the compiled
-// output: no compiled module (`build/**`, including the CLI) may import (or
-// re-export from) the type-only OpenCode packages (`@opencode/plugin` for V2
-// and the legacy `@opencode-ai/*` names).
+// Enforces the project's runtime-import boundary on the compiled output.
 //
-// These packages are devDependencies used only for types and are erased by
-// `tsc` when imported via `import type`. A leaked *value* import surviving
-// into `build/` breaks the published plugin at runtime when loaded from npm
-// (where the OpenCode packages are not installed): Node throws
-// `ERR_MODULE_NOT_FOUND` during module import — before the plugin's `setup`
-// ever runs, so the plugin's own logger never reports it; the only trace is
-// OpenCode's generic `failed to load plugin` warning. See AGENTS.md
-// ("Dependency Management") for the full rationale.
+// The plugin entry and the shared core (`build/**`, except `build/cli/`) must
+// not import (or re-export from) any OpenCode package: `@opencode/plugin` for
+// V2 and the legacy `@opencode-ai/*` names are type-only devDependencies, and
+// `@opencode/client` is a runtime dependency only the CLI needs. A leaked
+// *value* import of a type-only package breaks the published plugin at
+// module-load time, before `setup` runs, and OpenCode only reports a generic
+// `failed to load plugin` warning.
+//
+// `build/cli/**` may import `@opencode/client` (and its `/service` export) for
+// the reload call. It still may not import `@opencode/plugin` or the legacy
+// packages. See AGENTS.md ("Dependency Management") for the full rationale.
 //
 // An optional first CLI argument overrides the build directory so the script
 // can be driven against fixture trees in tests (avoids `process.exit(1)`
@@ -19,7 +19,7 @@
 // Wired into `pnpm build` after compilation so a leak fails the build
 // immediately.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -37,6 +37,23 @@ const buildDir = override ? resolve(override) : join(root, 'build');
 // (see `stripComments`) so prose mentions of these packages in JSDoc do not
 // produce false positives.
 const SDK_IMPORT_RE = /\b(?:from|import)\s*\(?\s*['"]@opencode(?:-ai)?\//;
+
+/**
+ * Removes the one runtime OpenCode import the CLI may use.
+ *
+ * `@opencode/client` and its `/service` export are allowed only in
+ * `build/cli/**`; after removing them, any remaining match is a violation.
+ *
+ * @param line - A comment-stripped source line.
+ * @param isCliFile - True when the file lives under `build/cli/`.
+ * @returns The line with allowed client imports removed.
+ */
+function withoutAllowedClientImports(line: string, isCliFile: boolean): string {
+  if (!isCliFile) {
+    return line;
+  }
+  return line.replace(/@opencode\/client(?:\/service)?/g, '');
+}
 
 /**
  * Neutralise `//` line comments and `/* ... *&#47;` block comments in compiled
@@ -92,8 +109,10 @@ for (const file of collectJs(buildDir)) {
   const raw = readFileSync(file, 'utf8');
   const stripped = stripComments(raw);
   const lines = stripped.split('\n');
+  const isCliFile = relative(buildDir, file).split(sep)[0] === 'cli';
   lines.forEach((line, i) => {
-    if (SDK_IMPORT_RE.test(line)) {
+    const checked = withoutAllowedClientImports(line, isCliFile);
+    if (SDK_IMPORT_RE.test(checked)) {
       offenders.push({ file: relative(root, file), line: i + 1, text: line.trim() });
     }
   });
@@ -105,10 +124,11 @@ if (offenders.length > 0) {
     console.error(`  ${file}:${line}: ${text}`);
   }
   console.error('');
-  console.error('The @opencode/plugin (V2) and legacy @opencode-ai/* packages are');
-  console.error('devDependencies (type-only). Use `import type { ... }` so tsc erases them;');
+  console.error('The plugin entry and src/lib/ may not import any OpenCode package at');
+  console.error('runtime. Use `import type { ... }` for @opencode/plugin so tsc erases it;');
   console.error('a surviving value import breaks the published plugin at module-load time.');
+  console.error('Only build/cli/** may import @opencode/client (the reload call).');
   process.exit(1);
 }
 
-console.log('check-runtime-imports: no OpenCode runtime imports in build/');
+console.log('check-runtime-imports: no disallowed OpenCode runtime imports in build/');

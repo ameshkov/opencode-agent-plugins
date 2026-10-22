@@ -1,7 +1,7 @@
 # E2E testing in Docker
 
 The e2e suite in [`test-e2e/`](../../test-e2e) is the release gate from
-[`docs/explanation/design.md`](../explanation/design.md) §9.1/§9.2.4: it
+[`docs/explanation/testing.md`](../explanation/testing.md): it
 boots a **real OpenCode V2 binary** and the fixture plugin packages inside
 a container, and asserts that the plugin's transform registrations
 actually reach the model request.
@@ -32,7 +32,7 @@ per-test timeouts (10 minutes per test, 20 minutes per hook).
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `OPENCODE_VERSION` | `2.0.16` | The `@opencode/cli` release under test; must stay on the same minor line as the `@opencode/plugin` pin in `package.json`. |
+| `OPENCODE_VERSION` | `2.0.16` | The `@opencode/cli` release under test; must stay on the same minor line as the `@opencode/plugin` and `@opencode/client` pins in `package.json`. |
 | `E2E_SERVER_PASSWORD` | random UUID | Basic-auth password for the container's `opencode serve`; set it for deterministic runs. |
 | `E2E_IMAGE_REUSE` | unset | `1` trusts an existing image instead of rebuilding it (must have been built from the current `Dockerfile`/`build/`). |
 | `E2E_TOP_PLUGINS` | unset | `1` enables the opt-in [top-plugins suite](#real-world-plugins-opt-in). |
@@ -74,7 +74,7 @@ per-test timeouts (10 minutes per test, 20 minutes per hook).
 | --- | --- |
 | `agent-plugins.e2e.test.ts` | Core V2 setup/transform contract: hook mode vs static baseline; `execute` tool calls; `PLUGIN_ROOT`/`PLUGIN_DATA` placeholders. |
 | `cli-ops.e2e.test.ts` | CLI lifecycle via `docker exec` (no server): install/update/remove, store/config filesystem, doctor/prune, ref semantics, monorepo subdirs. |
-| `cli-session.e2e.test.ts` | CLI → OpenCode chain: install picked up live, update + restart, remove + restart, `list` output, uninstalled git source skipped. |
+| `cli-session.e2e.test.ts` | CLI → OpenCode chain: install picked up live, update + reload, remove + reload (restart also checked), `list` output, uninstalled git source skipped. |
 | `negative-behavior.e2e.test.ts` | Failure-taxonomy rows against real sessions: invalid manifest isolation, `$schema` mismatch, user MCP/skill config wins. |
 | `remote-mcp.e2e.test.ts` | Streamable-http registration and host-delegated behavior: header forwarding, redirects, `PATH` bare-command resolution, `sse`/bad-URL skips. |
 | `top-plugins.e2e.test.ts` | Opt-in: real-world plugins installed and driven (see below). |
@@ -91,6 +91,9 @@ per-test timeouts (10 minutes per test, 20 minutes per hook).
   OpenCode's debounced tool reconcile — polling for `connected` alone lets
   a prompt land before the server's tools reach the registry. Reuse the
   helper rather than polling manually.
+- `scenario.session(..., { expectLoader: false })` is for a session that
+  runs after the loader entry was removed; the default waits for the
+  loader plugin before prompting.
 - Assertions run sequentially (`sequence.concurrent: false`); a scenario
   file is expected to be a `describe` of independent `it`s, each with its
   own container.
@@ -114,7 +117,7 @@ plugin, so partial results survive a failing scenario.
 
 ## Related
 
-- [`docs/explanation/design.md`](../explanation/design.md) §9 — testing
+- [`docs/explanation/testing.md`](../explanation/testing.md) — testing
   strategy and the empirical findings the suite encodes.
 - [Debug the plugin in a live OpenCode](./debugging.md) — the local
   counterpart for quick iteration.

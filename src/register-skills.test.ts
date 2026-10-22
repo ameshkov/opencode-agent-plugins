@@ -11,11 +11,11 @@ describe('skills registration collisions', () => {
     });
     try {
       // The baseline models another opencode plugin's registration: config
-      // skills are invisible to transforms (§9.1.5), so they cannot be seeded.
+      // skills are invisible to transforms (testing.md), so they cannot be seeded.
       const stub = stubContext({ skills: [skillInfo('hello')] });
       await runRegistration(stub, { plugins: [plugin.root] });
 
-      // The colliding plugin skills dir is NOT registered (§3.2), even though
+      // The colliding plugin skills dir is NOT registered (registration.md), even though
       // it also holds a non-colliding skill (registration is directory-granular).
       expect(stub.registeredSkills.size).toBe(0);
       const collision = logsWithBoundary(stub, 'skills-collision');

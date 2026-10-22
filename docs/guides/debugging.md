@@ -24,11 +24,16 @@ Two facts shape every debugging workflow:
 
 1. OpenCode V2 watches config directories and the loaded plugin's files
    and reloads the loader plugin, so a rebuild or config change is picked
-   up on the next location load. A restart is still the deterministic way
-   to reload after a rebuild.
-2. The compiled output in `build/` is self-contained: the
-   `@opencode/plugin` imports are type-only and erased by `tsc`, so you
-   can drop `build/` anywhere OpenCode can resolve it.
+   up on the next location load. The CLI also reloads a running service
+   after install, remove, or an update that applies at least one change.
+   A no-op update does not reload. A restart is still the deterministic
+   way to reload after a rebuild.
+2. The compiled plugin entry (`build/index.js`) has no runtime
+   `@opencode/*` import: the `@opencode/plugin` imports are type-only and
+   erased by `tsc`. It is not self-contained, though: it imports the rest
+   of `build/` and the runtime dependencies (`zod`, `ajv`), so OpenCode
+   must resolve those too. The CLI build (`build/cli/`) also needs
+   `jsonc-parser` and `@opencode/client` at runtime for the reload call.
 
 ## Load the plugin from a scratch project
 
@@ -121,7 +126,9 @@ printf "export { default } from './build/index.js';\n" > server.js
 
 4. Reload OpenCode after each rebuild. V2 watches the loader plugin's
    files and reloads it on the next location load, but a restart is the
-   deterministic way to be sure the new `build/` is what runs.
+   deterministic way to be sure the new `build/` is what runs. The CLI's
+   reload rebuilds every loaded location, including path sources; it
+   does not rebuild the plugin.
 
 Keep diagnostics in the plugin's `Logger` (`src/utils/logger.ts`): it
 writes `[opencode-agent-plugins]`-prefixed console lines that OpenCode
@@ -195,6 +202,6 @@ pnpm exec vitest --inspect-brk
 
 - [E2E testing](./e2e-testing.md) — verify behavior against a real
   OpenCode in Docker instead of a local one.
-- [`docs/explanation/design.md`](../explanation/design.md) §9 — the
+- [`docs/explanation/testing.md`](../explanation/testing.md) — the
   testing strategy and the empirical findings this workflow relies on.
 - [AGENTS.md](../../AGENTS.md) — code guidelines.

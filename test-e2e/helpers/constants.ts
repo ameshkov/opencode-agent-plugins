@@ -1,5 +1,5 @@
 /**
- * Shared constants for the docker e2e suite (docs/explanation/design.md §9.2.4).
+ * Shared constants for the docker e2e suite (docs/explanation/testing.md).
  *
  * The paths below are in-container paths: everything opencode-related runs
  * inside the image built from `test-e2e/Dockerfile`, so assertions must use
@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** Release under test; overridable, must match the @opencode/plugin pin. */
+/** Release under test; overridable, must match the @opencode/plugin and @opencode/client pins. */
 export const OPENCODE_VERSION = process.env['OPENCODE_VERSION'] ?? '2.0.16';
 
 /** Image name shared by the build and the per-test containers. */
@@ -38,10 +38,10 @@ export const SERVER_PASSWORD = process.env['E2E_SERVER_PASSWORD'] ?? randomUUID(
 /** Port of the fake OpenAI-compatible model server (in-container). */
 export const FAKE_MODEL_PORT = 8787;
 
-/** Plugin name/values the assertions use (see fixtures + §5.7–§5.8). */
+/** Plugin name/values the assertions use (see fixtures + registration.md–sources.md). */
 export const PLUGIN_ROOT = '/app/fixtures/my-plugin';
 
-/** Store root under the redirect-HOME (OpenCode config-dir convention, §5.3.2). */
+/** Store root under the redirect-HOME (OpenCode config-dir convention, sources.md). */
 export const STORE_DIR = '/app/opencode-home/.config/opencode/opencode-agent-plugins';
 
 /** PLUGIN_DATA key prefix of the path-sourced fixture (`<name>-<hash8>`). */
@@ -57,7 +57,7 @@ export const GIT_FIXTURE_SLUG = 'git-fixtures-remote';
 /** Monorepo subpath packages seeded under `packages/` of the git fixture. */
 export const GIT_SUBDIR_ALPHA_SOURCE = `${GIT_FIXTURE_SOURCE}#:packages/alpha`;
 /**
- * Subdir slug (`<url slug>-<flattened subdir>-<hash8>`, §5.3.4); the hash is
+ * Subdir slug (`<url slug>-<flattened subdir>-<hash8>`, sources.md); the hash is
  * the first 8 hex chars of the SHA-256 of the lowercased canonical subdir.
  */
 export const GIT_SUBDIR_ALPHA_SLUG = `${GIT_FIXTURE_SLUG}-packages-alpha-922b0764`;

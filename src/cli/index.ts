@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI entry (`docs/explanation/design.md` §5.11): the `opencode-agent-plugins` binary.
+ * CLI entry (`docs/explanation/cli-lifecycle.md`): the `opencode-agent-plugins` binary.
  *
  * Thin wrapper over `src/lib/`, run on Node ≥ 26 outside OpenCode. The `git`
  * binary is required only by git-backed commands (`install` from a URL,
@@ -29,28 +29,30 @@ Manages Agent Plugins for OpenCode: installs plugin packages (local path or
 git URL), registers them in the OpenCode config, and manages their lifecycle.
 
 Commands:
-  install <source> [--ref <ref>] [--global | --config <path>] [--yes] [--dry-run] [--no-register]
+  install <source> [--ref <ref>] [--global | --config <path>] [--yes] [--dry-run] [--no-register] [--no-reload]
       Fetches the source, validates it, previews components, asks for
       confirmation, and registers it in the OpenCode config.
-  remove <name> [--keep-data] [--yes]
+  remove <name> [--keep-data] [--yes] [--dry-run] [--no-reload] [--global | --config <path>]
       Unregisters from the OpenCode config and deletes the store entry and
       its PLUGIN_DATA.
-  check [<name>...]
+  check [<name>...] [--global | --config <path>]
       Read-only update check (network): resolves the remote ref and compares
       with the recorded commit. No names = all plugins.
-  update [<name>...] [--yes] [--force]
+  update [<name>...] [--yes] [--force] [--dry-run] [--no-reload] [--global | --config <path>]
       Applies available updates (staging -> validate -> atomic swap).
   list
       Shows installed plugins: source, URL/ref, resolved commit, manifest
       version, and status (current / update available / pinned).
-  doctor
+  doctor [--global | --config <path>]
       Read-only health report of store/config drift.
-  prune [--yes]
+  prune [--yes] [--global | --config <path>]
       Removes what doctor lists as orphaned or stale.
 
 Options:
   -h, --help      Show this help.
   -v, --version   Show the version.
+  --no-reload     Do not reload a running OpenCode after install, remove, or
+                  update. The command prints the restart hint instead.
 
 The git binary is required only by git-backed commands (install from a URL,
 check, update); list, remove, doctor, prune, and path-sourced install work
@@ -95,5 +97,13 @@ export async function run(argv: string[]): Promise<number> {
   }
 }
 
-const exitCode = await run(process.argv.slice(2));
+let exitCode: number;
+try {
+  exitCode = await run(process.argv.slice(2));
+} catch (error) {
+  // The last-resort boundary: a command that still throws reports its message
+  // without a stack trace and exits 1.
+  console.error(`error:   ${error instanceof Error ? error.message : String(error)}`);
+  exitCode = 1;
+}
 process.exit(exitCode);

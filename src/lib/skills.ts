@@ -1,5 +1,5 @@
 /**
- * Skill discovery and validation (`docs/explanation/design.md` §5.6).
+ * Skill discovery and validation (`docs/explanation/registration.md`).
  *
  * Skills live at the fixed location `skills/<name>/SKILL.md` — immediate
  * children only, no recursion. Missing `skills/` is a valid absence. Each
@@ -13,7 +13,7 @@ import { dirname, join, relative } from 'node:path';
 import { parseFrontmatter } from './frontmatter.js';
 import type { Failure } from './errors.js';
 import { failure } from './errors.js';
-import { isInside } from './paths.js';
+import { isInside, realpathInside } from './paths.js';
 
 /** Valid skill names: lowercase words separated by single dashes. */
 /** @internal Exported for tests only; not part of the public module API. */
@@ -47,44 +47,68 @@ export interface SkillDiscovery {
   skills: SkillInfo[];
   /** Non-fatal failures: invalid skills and nested `SKILL.md` warnings. */
   failures: Failure[];
+  /**
+   * True when the top-level `skills/` directory exists but cannot be read.
+   * The CLI treats this as fatal: the plugin tree cannot be validated.
+   */
+  fatal: boolean;
 }
 
 /**
  * Discovers and validates the skills of a plugin.
  *
  * @param pluginRoot - Absolute plugin root directory.
- * @returns The discovery result; never throws (I/O errors surface as
- * non-fatal failures unless the `skills` entry itself is not a directory,
- * which is a plugin-level problem reported as a skill failure).
+ * @returns The discovery result; never throws. I/O errors surface as
+ * non-fatal failures, except an unreadable top-level `skills/` directory,
+ * which sets {@link SkillDiscovery.fatal}.
  */
 export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery> {
   const skillsRoot = join(pluginRoot, 'skills');
   const sk = await stat(skillsRoot).catch(() => null);
   if (sk === null) {
-    return { missing: true, skills: [], failures: [] };
+    return { missing: true, skills: [], failures: [], fatal: false };
   }
   if (!sk.isDirectory()) {
     return {
       missing: false,
       skills: [],
       failures: [failure('skills-invalid', `skills path ${skillsRoot} is not a directory`)],
+      fatal: false,
     };
   }
-  // Realpath containment (§5.5): the plugin root resolves once and is reused
+  // Realpath containment (failures.md): the plugin root resolves once and is reused
   // for the top-level `skills/` entry and for every skill subdirectory.
   const resolvedRoot = await realpath(pluginRoot).catch(() => null);
   const escape = await skillsEscapeFailure(resolvedRoot, skillsRoot);
   if (escape !== null) {
-    return { missing: false, skills: [], failures: [escape] };
+    return { missing: false, skills: [], failures: [escape], fatal: false };
   }
 
   const failureList: Failure[] = [];
-  const collected = await collectValidSkills(skillsRoot, resolvedRoot, failureList);
+  let collected: Awaited<ReturnType<typeof collectValidSkills>>;
+  try {
+    collected = await collectValidSkills(skillsRoot, resolvedRoot, failureList);
+  } catch (error) {
+    // `readdir(skillsRoot)` can fail with EACCES/EPERM even though `stat`
+    // succeeded. The tree cannot be validated, so this is fatal (validate.ts
+    // never throws; the CLI aborts the install/update and cleans staging).
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      missing: false,
+      skills: [],
+      failures: [
+        failure('skills-invalid', `skills directory ${skillsRoot} is unreadable: ${message}`, {
+          section: 'failures.md',
+        }),
+      ],
+      fatal: true,
+    };
+  }
   if (collected.escaped) {
-    // Registration stays directory-granular on the client side (§5.6): one
+    // Registration stays directory-granular on the client side (registration.md): one
     // escaping subdirectory disables the plugin's whole `skills/` dir, so
     // none of the skills may be registered.
-    return { missing: false, skills: [], failures: failureList };
+    return { missing: false, skills: [], failures: failureList, fatal: false };
   }
 
   failureList.push(...(await findNestedSkillFiles(skillsRoot)));
@@ -93,6 +117,7 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
     missing: false,
     skills: collected.skills,
     failures: failureList,
+    fatal: false,
   };
 }
 
@@ -104,7 +129,9 @@ export async function discoverSkills(pluginRoot: string): Promise<SkillDiscovery
  * skills are recorded in `failures` as `skills-invalid`. A skill subdirectory
  * that resolves (realpath) outside the resolved plugin root is recorded as
  * `path-escape` and sets `escaped`, which disables registration of the whole
- * `skills/` dir (directory-granular, §5.6).
+ * `skills/` dir (directory-granular, registration.md). A `SKILL.md` file that
+ * resolves outside the root is recorded as `path-escape` and skips only that
+ * skill.
  *
  * @param skillsRoot - Absolute `skills/` directory.
  * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
@@ -137,13 +164,18 @@ async function collectValidSkills(
     if (file === null || !file.isFile()) {
       continue;
     }
+    const fileEscape = await skillFileEscapeFailure(entry, skillMd, resolvedRoot);
+    if (fileEscape !== null) {
+      failures.push(fileEscape);
+      continue;
+    }
     const info = await validateSkill(entry, skillMd);
     if (info === null) {
       failures.push(
         failure(
           'skills-invalid',
           `skill "${entry}" is invalid: missing frontmatter or invalid name/description`,
-          { skill: entry, section: '§5.6' },
+          { skill: entry, section: 'registration.md' },
         ),
       );
     } else {
@@ -154,7 +186,7 @@ async function collectValidSkills(
 }
 
 /**
- * Verifies the `skills/` dir containment (§5.5).
+ * Verifies the `skills/` dir containment (failures.md).
  *
  * The `skills/` path must resolve (realpath) inside the plugin root — a
  * symlinked `skills/` entry pointing outside the tree would otherwise result
@@ -172,14 +204,14 @@ async function skillsEscapeFailure(
   const resolvedSkills = await realpath(skillsRoot).catch(() => null);
   if (resolvedRoot !== null && resolvedSkills !== null && !isInside(resolvedRoot, resolvedSkills)) {
     return failure('path-escape', `skills path ${skillsRoot} escapes the plugin root`, {
-      section: '§5.5',
+      section: 'failures.md',
     });
   }
   return null;
 }
 
 /**
- * Verifies a single skill subdirectory containment (§5.5).
+ * Verifies a single skill subdirectory containment (failures.md).
  *
  * `stat`/`readFile` follow symlinks, so a `skills/<name>` entry that is a
  * symlink to a directory outside the plugin root must be caught here — the
@@ -201,10 +233,38 @@ async function skillDirEscapeFailure(
   if (resolvedRoot !== null && resolvedDir !== null && !isInside(resolvedRoot, resolvedDir)) {
     return failure('path-escape', `skill "${name}" escapes the plugin root`, {
       skill: name,
-      section: '§5.5',
+      section: 'failures.md',
     });
   }
   return null;
+}
+
+/**
+ * Verifies a single `SKILL.md` file containment (failures.md).
+ *
+ * `stat`/`readFile` follow symlinks, so a `SKILL.md` that is a symlink to a
+ * file outside the plugin root must be caught here. The skill is skipped with
+ * a `path-escape` warning; unlike an escaping subdirectory, it does not
+ * disable the rest of the `skills/` dir.
+ *
+ * @param name - The skill directory name.
+ * @param skillMd - Absolute `SKILL.md` file path.
+ * @param resolvedRoot - Resolved (realpath) plugin root, or null when it
+ * could not be resolved (the check then fails open).
+ * @returns A `path-escape` failure when the file leaves the root, else null.
+ */
+async function skillFileEscapeFailure(
+  name: string,
+  skillMd: string,
+  resolvedRoot: string | null,
+): Promise<Failure | null> {
+  if (resolvedRoot === null || (await realpathInside(resolvedRoot, skillMd))) {
+    return null;
+  }
+  return failure('path-escape', `skill "${name}" SKILL.md escapes the plugin root`, {
+    skill: name,
+    section: 'failures.md',
+  });
 }
 
 /**
@@ -292,7 +352,7 @@ async function findNestedSkillFiles(skillsRoot: string): Promise<Failure[]> {
             failure(
               'skills-nested',
               `nested SKILL.md ${rel}; skills are registered individually, so it is ignored`,
-              { file: rel, section: '§5.6' },
+              { file: rel, section: 'registration.md' },
             ),
           );
         }

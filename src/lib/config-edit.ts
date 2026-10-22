@@ -1,6 +1,6 @@
 /**
  * JSONC-preserving edits of the OpenCode config's plugin arrays
- * (`docs/explanation/design.md` §5.11–§5.12.4).
+ * (`docs/explanation/cli-lifecycle.md`, `docs/explanation/changes-and-reload.md`).
  *
  * V2 registers plugins in the `plugins` array as `{ package, options }`
  * objects; a bare package string (`"opencode-agent-plugins"`) is a valid loader
@@ -21,9 +21,11 @@ import {
   parseTree,
   type Edit,
   type Node,
+  type ParseError,
 } from 'jsonc-parser';
 import { ConfigEditError, resolveConfigFile, type ConfigScope } from './config-file.js';
 import {
+  configSourcesOfRoot,
   entrySourcesOf,
   findLegacyTuple,
   findLoaderEntryIndex,
@@ -53,8 +55,8 @@ const FORMAT = { insertSpaces: true, tabSize: 2 };
  * @throws {ConfigEditError} When the config structure cannot be edited safely.
  */
 export function applyRegisterSource(text: string, source: string): string {
-  // A missing or empty config file is treated as an empty object: the design
-  // creates the config file when none exists (§5.11). Whitespace-only content
+  // A missing or empty config file is treated as an empty object: the CLI
+  // creates the config file when none exists (cli-lifecycle.md). Whitespace-only content
   // is not valid JSONC, so normalize it to `{}` as well.
   const sourceText = text.trim() === '' ? '{}' : text;
   const root = parseTree(sourceText);
@@ -146,32 +148,47 @@ export function applyRemoveSource(text: string, source: string): string {
   return applyEdits(text, edits) as string;
 }
 
+/** Result of reading a config's plugin source list. */
+export interface ConfigSourceList {
+  /** Source strings found (empty when the config is malformed). */
+  sources: string[];
+  /** Why the source list cannot be trusted, or null when it is complete. */
+  problem: string | null;
+}
+
 /**
  * Extracts the configured source strings from a config text (best-effort).
  *
  * Reads the V2 loader entry's `options.plugins` array plus any legacy V1
  * tuple, so store entries referenced through either form stay protected from
- * `doctor`/`prune`. Unreadable/malformed configs yield an empty list.
+ * `doctor`/`prune`. Unreadable/malformed configs yield an empty list; use
+ * {@link configSourceListOf} when completeness matters.
  *
  * @param text - Config text.
  * @returns The source strings found.
  */
 export function configSourcesOf(text: string): string[] {
-  const root = parseTree(text);
-  if (root === undefined || root.type !== 'object') {
-    return [];
+  return configSourceListOf(text).sources;
+}
+
+/**
+ * Reads a config's source list and reports whether the config is usable.
+ *
+ * A config that does not parse as JSONC (trailing commas are accepted, as
+ * OpenCode accepts them), whose root is not an object, or whose plugin arrays
+ * have the wrong shape yields an empty list and a problem. `doctor` uses the
+ * problem to mark the config references incomplete and refuse `prune`.
+ *
+ * @param text - Config text.
+ * @returns The source strings and a shape/parse problem (null when complete).
+ */
+export function configSourceListOf(text: string): ConfigSourceList {
+  const errors: ParseError[] = [];
+  const root = parseTree(text, errors, { allowTrailingComma: true });
+  if (root === undefined || errors.length > 0) {
+    return { sources: [], problem: 'config is not a valid JSONC document' };
   }
-  const plugins = findPluginsArray(root);
-  const sources = entrySourcesOf(plugins, findLoaderEntryIndex(plugins));
-  const legacy = findLegacyTuple(root);
-  if (legacy !== null) {
-    for (const source of legacy.sources) {
-      if (!sources.includes(source)) {
-        sources.push(source);
-      }
-    }
-  }
-  return sources;
+  return configSourcesOfRoot(root);
 }
 
 /**
@@ -214,7 +231,7 @@ export function configHasLegacyTuple(text: string): boolean {
   return findLegacyTuple(root) !== null;
 }
 
-/** Result of probing the resolved config for the loader entry (§5.11). */
+/** Result of probing the resolved config for the loader entry (cli-lifecycle.md). */
 export interface ConfigProbe {
   /** Absolute path of the resolved config file. */
   path: string;
@@ -231,7 +248,7 @@ export interface ConfigProbe {
  *
  * The CLI probes this before `install` registers a source: when the loader
  * entry is absent, registering the source alone would never be loaded by
- * OpenCode, so the CLI warns and asks the user first (§5.11). A missing or
+ * OpenCode, so the CLI warns and asks the user first (cli-lifecycle.md). A missing or
  * unreadable config file reports `hasEntry: false` (the entry cannot exist
  * there; the config is created on registration).
  *

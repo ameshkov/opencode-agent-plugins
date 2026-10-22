@@ -57,12 +57,12 @@
     "prepare": "husky || true"
   },
   "dependencies": {
+    "@opencode/client": "2.0.16",
     "ajv": "8.20.0",
     "jsonc-parser": "3.3.1",
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@opencode/client": "2.0.16",
     "@opencode/plugin": "2.0.16",
     "@types/node": "26.4.0",
     "husky": "9.1.7",

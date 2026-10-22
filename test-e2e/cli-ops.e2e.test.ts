@@ -2,7 +2,7 @@
  * Docker e2e tests for the CLI lifecycle — no opencode server booted, so
  * these scenarios are cheap: they `docker exec` the `opencode-agent-plugins`
  * binary inside the `cli` scenario container and assert on the resulting
- * store/config filesystem (docs/explanation/design.md §5.12 — staging, validation,
+ * store/config filesystem (docs/explanation/cli-lifecycle.md — staging, validation,
  * atomic swap, doctor/prune, ref semantics).
  *
  * The container boots with the `opencode-agent-plugins` config entry
@@ -73,7 +73,7 @@ describe(`e2e cli ops: real filesystem, opencode ${OPENCODE_VERSION}`, () => {
 
         const after = await configOf(scenario);
         // The original source string is registered (never store-internal
-        // paths, §5.11); the entry is the npm package form (§5.11).
+        // paths, cli-lifecycle.md); the entry is the npm package form (cli-lifecycle.md).
         expect(after).toContain(CLI);
         expect(after).toContain('opencode-agent-plugins');
 
@@ -317,7 +317,7 @@ describe(`e2e cli ops: real filesystem, opencode ${OPENCODE_VERSION}`, () => {
   );
 
   it(
-    'monorepo subpaths: two subdirs side by side, update one, remove one (§5.3.4)',
+    'monorepo subpaths: two subdirs side by side, update one, remove one (sources.md)',
     async () => {
       await withScenario(await imageTag(), 'cli', {}, async (scenario) => {
         await cliOk(scenario, ['install', GIT_SUBDIR_ALPHA_SOURCE, '--yes']);

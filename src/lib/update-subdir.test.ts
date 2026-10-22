@@ -1,5 +1,6 @@
 /**
- * Subdir update behavior (`docs/explanation/design.md` §5.3.4, §5.12.3): an update
+ * Subdir update behavior (`docs/explanation/sources.md`,
+ * `docs/explanation/cli-lifecycle.md`): an update
  * re-derives the recorded subdir, swaps only that tree, keeps the previous
  * install when the subdir disappears, and preserves the metadata `subdir`.
  */
@@ -45,7 +46,7 @@ async function installedVersion(
   return (JSON.parse(text) as { version?: string }).version ?? '';
 }
 
-describe('subdir updates (§5.3.4)', () => {
+describe('subdir updates (sources.md)', () => {
   let fixture: GitBareFixture;
   let storeHome: TempDir;
   let env: Record<string, string | undefined>;
@@ -86,7 +87,7 @@ describe('subdir updates (§5.3.4)', () => {
     await storeHome.cleanup();
   });
 
-  it('updates only the selected subdir and keeps its metadata subdir (§5.12.3)', async () => {
+  it('updates only the selected subdir and keeps its metadata subdir (cli-lifecycle.md)', async () => {
     const betaBefore = await readMeta(betaSlug, env);
     await writeFile(
       join(fixture.work, 'packages/alpha/plugin.json'),
@@ -114,7 +115,7 @@ describe('subdir updates (§5.3.4)', () => {
     expect(await installedVersion(betaSlug, env)).toBe('1.0.0');
   });
 
-  it('keeps the previous install when the subdir disappears (§5.3.4)', async () => {
+  it('keeps the previous install when the subdir disappears (sources.md)', async () => {
     await gitCmd(['rm', '-r', 'packages/alpha'], fixture.work);
     await gitCmd(['commit', '-m', 'drop alpha'], fixture.work);
     await gitCmd(['push', 'origin', 'main'], fixture.work);

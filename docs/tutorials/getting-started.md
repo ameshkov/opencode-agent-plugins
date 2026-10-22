@@ -42,10 +42,19 @@ asks two questions:
    OpenCode would never load the registered source.
 2. **Install this plugin? [y/N]** — type `y` and press Enter.
 
-The last line confirms the result:
+The last two lines confirm the result. If OpenCode was running, the CLI
+reloaded it:
 
 ```text
-installed context7 1.0.1. Restart OpenCode to use it.
+installed context7 1.0.1.
+OpenCode reloaded; the change applies where this config is loaded.
+```
+
+If no service was running, the second line is the restart hint instead:
+
+```text
+installed context7 1.0.1.
+Restart OpenCode to use it.
 ```
 
 ## 2. Look at what changed
@@ -76,9 +85,10 @@ layout and the other options.
 
 ## 3. Reload OpenCode
 
-Start (or restart) OpenCode in the project. OpenCode V2 also watches its
-configuration and reloads the plugin on its own, but a restart is the
-deterministic way to pick up the change.
+Start OpenCode in the project. The CLI reloads a running OpenCode after a
+successful install. If OpenCode was not running, start it now. OpenCode V2
+also watches its configuration and reloads the plugin on its own, but a
+restart is the deterministic way to pick up the change.
 
 ## 4. Use the skill
 

@@ -79,6 +79,28 @@ async function waitForFile(path) {
   }
 }
 
+/**
+ * Writes the local service registration file that `@opencode/client`
+ * discovery reads. The e2e server starts directly rather than through the
+ * service manager, so the file is created here with the child's PID.
+ *
+ * @param pid - PID of the `opencode serve` process.
+ * @param password - Basic-auth password the server was started with.
+ */
+function writeServiceFile(pid, password) {
+  const dir = '/app/opencode-home/.local/state/opencode';
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    `${dir}/service.json`,
+    JSON.stringify({
+      id: 'e2e-service',
+      url: 'http://127.0.0.1:4096',
+      pid,
+      password,
+    }),
+  );
+}
+
 /** Writes the setup marker and prepares the ctrl dir once per container. */
 async function ensureSetup() {
   if (isSetUp()) {
@@ -142,6 +164,11 @@ const opencode = spawn(
 opencode.on('exit', (code) => {
   process.exit(code ?? 0);
 });
+
+if (opencode.pid === undefined) {
+  throw new Error('opencode serve did not start');
+}
+writeServiceFile(opencode.pid, serverPassword);
 
 // Forward docker's SIGTERM (stop/restart) to opencode so the container stops
 // cleanly instead of leaving a server bound to 4096 (which would break an

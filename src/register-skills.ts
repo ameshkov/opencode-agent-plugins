@@ -1,12 +1,12 @@
 /**
- * Skills registration for the plugin entry (`docs/explanation/design.md` §5.6).
+ * Skills registration for the plugin entry (`docs/explanation/registration.md`).
  *
  * Registers each validated skill through a V2 `ctx.skill.transform` (id,
  * name, description, path, content). An editor-visible collision skips the
- * plugin's whole `skills/` dir (registration is directory-granular, §5.6):
+ * plugin's whole `skills/` dir (registration is directory-granular, registration.md):
  * our own earlier registration is an error, another opencode plugin's is a
  * warning. Config skills never reach the editor — the host enforces their
- * precedence (§9.1.5). Lives in `src/` (not `src/lib/`) because it talks to
+ * precedence (testing.md). Lives in `src/` (not `src/lib/`) because it talks to
  * the V2 plugin context; the `src/lib/skills.ts` discovery half stays
  * opencode-free.
  *
@@ -28,10 +28,10 @@ import type { RegisterState, RegistrationContext } from './register-types.js';
  *
  * Skill names must be unique at the location; registration is
  * directory-granular, so an editor-visible collision drops the whole plugin
- * `skills/` dir (§5.6). A collision with our own earlier registration in this
+ * `skills/` dir (registration.md). A collision with our own earlier registration in this
  * setup run is a plugin–plugin collision (error); a collision with another
  * opencode plugin's registration is a warning. Config skills never reach the
- * editor — the host enforces their precedence (§9.1.5).
+ * editor — the host enforces their precedence (testing.md).
  *
  * @param context - The V2 plugin context (skills domain).
  * @param skills - Validated skills from discovery (name, description, path,

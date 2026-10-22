@@ -1,5 +1,5 @@
 /**
- * Status records for `check` / `update` runs (`docs/explanation/design.md` §5.11/§5.12.3).
+ * Status records for `check` / `update` runs (`docs/explanation/cli-lifecycle.md`).
  *
  * Shared by the read-only check engine and the update swap path so both
  * surfaces report the same record shape and failure classifications.
@@ -30,8 +30,9 @@ export interface UpdateStatus {
   /** Extra explanation (unreachable error, moved-tag hint, ...). */
   detail?: string;
   /**
-   * Taxonomy classification of failure statuses (§6 rows 807-808):
-   * `check-unreachable` for `unreachable`, `update-ref` for `moved-tag`.
+   * Taxonomy classification of failure statuses (the `check-unreachable` and
+   * `update-ref` rows of failures.md): `check-unreachable` for `unreachable`,
+   * `update-ref` for `moved-tag`.
    * Absent for statuses that are not failures.
    */
   failure?: Failure;
@@ -65,12 +66,12 @@ export function statusFor(
   };
 }
 
-/** Taxonomy failure for the §6 `check-unreachable` row (remote unreachable). */
+/** Taxonomy failure for the failures.md `check-unreachable` row (remote unreachable). */
 function unreachableFailure(slug: string, source: string, detail: string): Failure {
   return failure('check-unreachable', `remote unreachable: ${detail}`, { slug, source });
 }
 
-/** Taxonomy failure for the §6 `update-ref` row (moved tag, needs --force). */
+/** Taxonomy failure for the failures.md `update-ref` row (moved tag, needs --force). */
 function movedTagFailure(slug: string, source: string): Failure {
   return failure('update-ref', 'tag moved; update requires --force', { slug, source });
 }

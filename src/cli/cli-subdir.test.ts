@@ -1,5 +1,6 @@
 /**
- * CLI monorepo subpath scenarios (`docs/explanation/design.md` §5.3.4, §9.2): two subdirs
+ * CLI monorepo subpath scenarios (`docs/explanation/sources.md`,
+ * `docs/explanation/testing.md`): two subdirs
  * of one repository install side by side, `list` shows the subdir, `--ref`
  * overrides only the ref, and update/remove on one leaves the other intact.
  */
@@ -50,6 +51,7 @@ function packageManifest(name: string, version: string): string {
 
 let fixture: GitBareFixture;
 let store: TempDir;
+let state: TempDir;
 let configPath = '';
 let env: Record<string, string | undefined> = {};
 let alphaSlug = '';
@@ -76,6 +78,9 @@ beforeAll(async () => {
   env = storeEnv(store.root);
   process.env['XDG_CONFIG_HOME'] = env['XDG_CONFIG_HOME'];
   process.env['OPENCODE_CONFIG_DIR'] = '';
+  // Keep reload discovery away from the developer's real service.json.
+  state = await tempDir('oap-cli-subdir-state-');
+  process.env['XDG_STATE_HOME'] = state.root;
   configPath = join(store.root, 'opencode.json');
   await writeFile(
     configPath,
@@ -92,13 +97,15 @@ beforeAll(async () => {
 afterAll(async () => {
   delete process.env['XDG_CONFIG_HOME'];
   delete process.env['OPENCODE_CONFIG_DIR'];
+  delete process.env['XDG_STATE_HOME'];
   vi.restoreAllMocks();
   await fixture.cleanup();
   await store.cleanup();
+  await state.cleanup();
 });
 
 describe('CLI subdir lifecycle', () => {
-  it('installs two subdirs of one repository side by side (§9.2)', async () => {
+  it('installs two subdirs of one repository side by side (testing.md)', async () => {
     const alphaExit = await cmdInstall(argsOf('install', [alphaSource()], ['--yes']));
     expect(alphaExit).toBe(0);
     const betaExit = await cmdInstall(
@@ -127,7 +134,7 @@ describe('CLI subdir lifecycle', () => {
     expect(config).toContain(betaSource());
   });
 
-  it('refuses a case-only slug collision as already installed (§10)', async () => {
+  it('refuses a case-only slug collision as already installed (sources.md)', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const exitCode = await cmdInstall(
@@ -144,7 +151,7 @@ describe('CLI subdir lifecycle', () => {
     }
   });
 
-  it('list shows the subdir for each installed entry (§5.11)', async () => {
+  it('list shows the subdir for each installed entry (cli-lifecycle.md)', async () => {
     const exitCode = await cmdList();
     expect(exitCode).toBe(0);
     const output = vi
@@ -155,12 +162,12 @@ describe('CLI subdir lifecycle', () => {
     expect(output).toContain('subdir:packages/beta');
   });
 
-  it('doctor reports the subdir store entries as referenced (§5.11)', async () => {
+  it('doctor reports the subdir store entries as referenced (cli-lifecycle.md)', async () => {
     const exitCode = await cmdDoctor(argsOf('doctor', []));
     expect(exitCode).toBe(0);
   });
 
-  it('rejects a malformed subdir with nothing written (§5.3.4)', async () => {
+  it('rejects a malformed subdir with nothing written (sources.md)', async () => {
     const before = await readFile(configPath, 'utf8');
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -174,7 +181,7 @@ describe('CLI subdir lifecycle', () => {
     }
   });
 
-  it('updates one subdir and leaves the other untouched (§5.12.3)', async () => {
+  it('updates one subdir and leaves the other untouched (cli-lifecycle.md)', async () => {
     const betaBefore = await readMeta(betaSlug, env);
     await writeFile(
       join(fixture.work, 'packages/alpha/plugin.json'),
@@ -194,7 +201,7 @@ describe('CLI subdir lifecycle', () => {
     expect(betaMeta?.resolvedCommit).toBe(betaBefore?.resolvedCommit);
   });
 
-  it('removes one subdir and leaves the other registered (§5.12.2)', async () => {
+  it('removes one subdir and leaves the other registered (cli-lifecycle.md)', async () => {
     const exitCode = await cmdRemove(argsOf('remove', [alphaSlug], ['--yes']));
     expect(exitCode).toBe(0);
     const config = await readFile(configPath, 'utf8');

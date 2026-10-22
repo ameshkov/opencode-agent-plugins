@@ -1,5 +1,5 @@
 /**
- * Path containment and placeholder expansion (`docs/explanation/design.md` §5.5).
+ * Path containment and placeholder expansion (`docs/explanation/failures.md`).
  *
  * The Agent Plugins spec requires a filesystem-resolved package boundary:
  * every package path the client touches must resolve inside the plugin root,
@@ -9,6 +9,7 @@
  * by manifest, skills, MCP and CLI code paths.
  */
 
+import { realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 
 /**
@@ -65,12 +66,35 @@ export function isInside(anchor: string, target: string): boolean {
   if (rel === '') {
     return true;
   }
-  return !rel.startsWith('..') && !path.isAbsolute(rel);
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
 /** @internal Exported for tests only; not part of the public module API. */
 export function expandGeneric(value: string, root: string, dataDir: string): string {
   return expandPlaceholders(value, root, dataDir);
+}
+
+/**
+ * Checks whether `target` resolves (realpath) inside `root` (realpath).
+ *
+ * Both sides are resolved, so a symlinked root or target is compared by its
+ * real location. This is the shared containment check for package files
+ * (`plugin.json`, `mcp.json`, `SKILL.md`) and existing `cwd` targets.
+ *
+ * @param root - Anchor directory.
+ * @param target - Path to test.
+ * @returns True when the resolved target is inside the resolved root; false
+ * when either path cannot be resolved.
+ */
+export async function realpathInside(root: string, target: string): Promise<boolean> {
+  const [resolvedRoot, resolvedTarget] = await Promise.all([
+    realpath(root).catch(() => null),
+    realpath(target).catch(() => null),
+  ]);
+  if (resolvedRoot === null || resolvedTarget === null) {
+    return false;
+  }
+  return isInside(resolvedRoot, resolvedTarget);
 }
 
 /**
@@ -107,6 +131,13 @@ export function resolveCommand(command: string, root: string): PathResult {
   if (command.startsWith('../') || command.startsWith('..\\')) {
     return { ok: false, kind: 'escape', reason: `command ${command} escapes the plugin root` };
   }
+  if (command.includes('/') || command.includes('\\')) {
+    return {
+      ok: false,
+      kind: 'invalid',
+      reason: 'command may be a bare executable or ./… only',
+    };
+  }
   return { ok: true, path: command };
 }
 
@@ -114,9 +145,11 @@ export function resolveCommand(command: string, root: string): PathResult {
  * Resolves a `cwd` value against the plugin root / data dir.
  *
  * Allowed forms (after expansion): `./...`, `${PLUGIN_ROOT}...`,
- * `${PLUGIN_DATA}...`. The value is expanded first, then resolved against the
- * anchor indicated by the expanded prefix, and the result must stay inside
- * that anchor. `undefined` means the plugin root (the spec default).
+ * `${PLUGIN_DATA}...`. The value is expanded first, separators are normalized,
+ * then it is resolved against the anchor indicated by the expanded prefix and
+ * the result must stay inside that anchor. When the resolved target exists,
+ * its realpath must also stay inside the realpathed anchor. `undefined` means
+ * the plugin root (the spec default).
  *
  * @param cwd - The `cwd` value from `mcp.json`, or undefined for default.
  * @param root - Absolute plugin root.
@@ -124,21 +157,21 @@ export function resolveCommand(command: string, root: string): PathResult {
  * @returns The resolved absolute cwd, or a failure with a kind (`escape` when
  * the path leaves its anchor) and a reason.
  */
-export function resolveCwd(cwd: string | undefined, root: string, dataDir: string): PathResult {
+export async function resolveCwd(
+  cwd: string | undefined,
+  root: string,
+  dataDir: string,
+): Promise<PathResult> {
   if (cwd === undefined || cwd === '') {
     return { ok: true, path: root };
   }
   // Unknown placeholder-shaped text stays literal server-side; it then fails
   // the allowed-forms check below rather than being mis-anchored.
   const expanded = expandPlaceholders(cwd, root, dataDir);
-  const anchor =
-    expanded === root || expanded.startsWith(root + path.sep)
-      ? root
-      : expanded === dataDir || expanded.startsWith(dataDir + path.sep)
-        ? dataDir
-        : expanded.startsWith('./') || expanded.startsWith('.\\')
-          ? root
-          : null;
+  // `${PLUGIN_ROOT}/…` expands to a mixed-separator string on Windows, so
+  // normalize before the anchor check and the resolution.
+  const normalized = expanded.replace(/\\/g, '/');
+  const anchor = cwdAnchor(normalized, root, dataDir);
   if (anchor === null) {
     return {
       ok: false,
@@ -148,9 +181,34 @@ export function resolveCwd(cwd: string | undefined, root: string, dataDir: strin
         'or ${PLUGIN_DATA}-based',
     };
   }
-  const resolved = path.resolve(anchor, expanded);
+  const resolved = path.resolve(anchor, normalized);
   if (!isInside(anchor, resolved)) {
     return { ok: false, kind: 'escape', reason: `cwd ${cwd} escapes its directory` };
   }
+  const realAnchor = await realpath(anchor).catch(() => anchor);
+  const realResolved = await realpath(resolved).catch(() => null);
+  if (realResolved !== null && !isInside(realAnchor, realResolved)) {
+    return { ok: false, kind: 'escape', reason: `cwd ${cwd} escapes its directory` };
+  }
   return { ok: true, path: resolved };
+}
+
+/**
+ * Picks the anchor of an expanded, separator-normalized `cwd` value.
+ *
+ * @param normalized - Expanded value with `/` separators.
+ * @param root - Absolute plugin root.
+ * @param dataDir - Absolute plugin data dir.
+ * @returns The anchor path, or null when the value is not an allowed form.
+ */
+function cwdAnchor(normalized: string, root: string, dataDir: string): string | null {
+  const rootNorm = root.replace(/\\/g, '/');
+  const dataNorm = dataDir.replace(/\\/g, '/');
+  if (normalized === rootNorm || normalized.startsWith(`${rootNorm}/`)) {
+    return root;
+  }
+  if (normalized === dataNorm || normalized.startsWith(`${dataNorm}/`)) {
+    return dataDir;
+  }
+  return normalized.startsWith('./') ? root : null;
 }

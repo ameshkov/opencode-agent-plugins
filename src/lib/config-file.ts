@@ -1,6 +1,6 @@
 /**
- * Config file resolution and safe writes (`docs/explanation/design.md`
- * §5.11–§5.12.4).
+ * Config file resolution and safe writes (`docs/explanation/cli-lifecycle.md`,
+ * `docs/explanation/changes-and-reload.md`).
  *
  * The CLI registers/removes plugin sources by editing the OpenCode config
  * file; the JSONC-preserving array edits themselves live in
@@ -28,13 +28,28 @@ export class ConfigEditError extends Error {
   }
 }
 
+/**
+ * The location directory a config's relative path sources resolve against.
+ *
+ * Mirrors startup (`ctx.location.directory`): a project scope resolves
+ * against its own cwd; the global and custom scopes use the process cwd.
+ * `doctor`, `check`, and `update` share this rule so they agree on path
+ * sources.
+ *
+ * @param scope - Config scope selected on the command line.
+ * @returns The directory relative paths resolve against.
+ */
+export function locationDir(scope: ConfigScope): string {
+  return scope.kind === 'project' ? scope.cwd : process.cwd();
+}
+
 /** The config file resolved for a scope. */
 export interface ResolvedConfigFile {
   /** Absolute path of the config file to read or edit. */
   path: string;
   /**
    * True when `opencode.jsonc` was preferred over an existing `opencode.json`
-   * in the target scope (§5.11) — the CLI announces this.
+   * in the target scope (cli-lifecycle.md) — the CLI announces this.
    */
   jsoncWins: boolean;
 }
@@ -43,7 +58,7 @@ export interface ResolvedConfigFile {
  * Resolves the config file for a scope.
  *
  * For the project and global scopes `opencode.jsonc` wins over
- * `opencode.json` when both exist (§5.11 — and the CLI says so); when
+ * `opencode.json` when both exist (cli-lifecycle.md — and the CLI says so); when
  * neither exists the default `opencode.json` path is returned (creation
  * happens on write). A `--config` path is returned verbatim.
  *
@@ -64,7 +79,7 @@ export async function resolveConfigFile(
 }
 
 /**
- * Applies the `.jsonc`-wins preference inside one config directory (§5.11).
+ * Applies the `.jsonc`-wins preference inside one config directory (cli-lifecycle.md).
  *
  * @param dir - Config directory to inspect (project root or global config
  * dir).
@@ -83,7 +98,7 @@ function resolveConfigInDir(dir: string): ResolvedConfigFile {
 }
 
 /**
- * The CLI announcement for a `.jsonc`-preferred config (§5.11), or null when
+ * The CLI announcement for a `.jsonc`-preferred config (cli-lifecycle.md), or null when
  * the `.jsonc` file did not win.
  *
  * @param resolved - The resolved config file.
@@ -97,13 +112,36 @@ export function configPreferenceNote(resolved: ResolvedConfigFile): string | nul
 }
 
 /**
+ * Reads a config file, distinguishing "does not exist" from "cannot be read".
+ *
+ * A missing config is normal (the CLI creates it on write); an unreadable one
+ * must never be treated as empty, or the caller would overwrite content it
+ * could not see.
+ *
+ * @param path - Absolute config file path.
+ * @returns The file content, or null when the file does not exist.
+ * @throws {ConfigEditError} When the file exists but cannot be read.
+ */
+export async function readConfigText(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ConfigEditError(`config exists but could not be read: ${message}`);
+  }
+}
+
+/**
  * Validates, backs up and atomically writes an edited config file.
  *
  * The edited text must parse as JSONC (a CLI must never leave OpenCode with a
  * corrupt config); the previous content is backed up to the store's
  * `backups/` dir with a timestamped name, then the file is replaced via
  * temp + rename. A missing parent directory is created, so installing into a
- * config that does not exist yet works (the design creates `opencode.json`).
+ * config that does not exist yet works (the CLI creates `opencode.json`).
  *
  * Abort-on-conflict: when `expected` is given, it must match the content
  * read earlier by the caller; if the file changed between the read and the
@@ -116,8 +154,9 @@ export function configPreferenceNote(resolved: ResolvedConfigFile): string | nul
  * (null when the file did not exist); omit to skip the conflict check.
  * @returns The path of the written backup (null when there was nothing to
  * back up, i.e. the file was created by this call).
- * @throws {ConfigEditError} When the edit does not parse as JSONC or the file
- * changed on disk since the caller read it.
+ * @throws {ConfigEditError} When the edit does not parse as JSONC, the file
+ * changed on disk since the caller read it, or an existing file cannot be
+ * read.
  */
 export async function saveConfig(
   path: string,
@@ -137,7 +176,7 @@ export async function saveConfig(
         `(${printParseErrorCode(first.error)} at offset ${first.offset})`,
     );
   }
-  const previous = await readFile(path, 'utf8').catch(() => null);
+  const previous = await readConfigText(path);
   if (expected !== undefined && previous !== expected) {
     throw new ConfigEditError(
       'config file changed on disk since it was read; aborting (nothing written)',

@@ -60,7 +60,7 @@ async function writeReport(): Promise<void> {
 /**
  * Skill names advertised in a captured request: the `<available_skills>`
  * block of the system prompt, or the `skill` tool description on releases
- * that carry it there (docs/explanation/design.md §3.3).
+ * that carry it there (docs/explanation/registration.md).
  *
  * @param request - A captured chat-completions request.
  * @returns The advertised skill names.

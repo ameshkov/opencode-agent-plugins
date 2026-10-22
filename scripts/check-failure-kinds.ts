@@ -1,10 +1,10 @@
-// Enforces the failure-taxonomy invariant (docs/explanation/design.md §6): every kind
+// Enforces the failure-taxonomy invariant (docs/explanation/failures.md): every kind
 // declared in the `FailureKind` union (`src/lib/errors.ts`) must be produced
 // by a `failure('<kind>', ...)` literal somewhere in production `src/`, and
 // every such literal must refer to a declared kind. This keeps the taxonomy
 // contract exercised on both surfaces (plugin load and CLI) — a declared but
 // dead kind, or an undeclared literal, fails the build immediately instead of
-// silently drifting from the design table.
+// silently drifting from the taxonomy table.
 //
 // Wired into `pnpm build` after compilation, next to
 // `scripts/check-runtime-imports.ts`. Imported (never executed on import) by
@@ -282,7 +282,7 @@ function failWithOffenders(offenders: Offender[]): never {
     "Every kind in the FailureKind union must be produced by a `failure('<kind>', ...)`",
   );
   console.error(
-    'call in production src/ (plugin load or CLI), matching docs/explanation/design.md §6 — and every',
+    'call in production src/ (plugin load or CLI), matching docs/explanation/failures.md — and every',
   );
   console.error("failure('<kind>') literal must be a declared kind. Add or remove kinds in sync.");
   process.exit(1);

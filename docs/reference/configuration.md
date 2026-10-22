@@ -47,15 +47,17 @@ Each entry in `plugins` is one of:
   Used in place and never copied into the store, so edits to the directory
   are picked up on the next OpenCode location load. Install one with
   `npx opencode-agent-plugins install ./agent-plugins/my-plugin`.
-- **Git URL** — `https://...`, `git+https://...`, `ssh://...`,
-  `git+ssh://...`, `file://...` (local repositories), or the scp-like
-  `git@host:path` form, with an optional
+- **Git URL** — `https://...`, `http://...`, `git+https://...`,
+  `ssh://...`, `ssh+git://...`, `git+ssh://...`, `file://...` (local
+  repositories), or the scp-like `git@host:path` form, with an optional
   `#fragment`: a `#ref` pin (`#v1.2.0`, `#main`, `#<commit-sha>`), a
   monorepo subpath (`#v1.2.0:packages/linter`, `#:apps/research`), or both.
-  Without a `#ref`, the remote's `HEAD` at install time is used. Each
-  selected subdir gets its own store entry and `PLUGIN_DATA`. Git sources
-  must be installed with the CLI first; at startup they resolve against the
-  local store and are skipped with a warning if not installed.
+  A leading `git+` is stripped from any scheme before the URL is
+  recognized. Without a `#ref`, the remote's `HEAD` at install time is
+  used. Each selected subdir gets its own store entry and `PLUGIN_DATA`.
+  Git sources must be installed with the CLI first; at startup they
+  resolve against the local store and are skipped with a warning if not
+  installed.
 - **Installed name** — the manifest name or store slug of a plugin already
   installed via the CLI.
 

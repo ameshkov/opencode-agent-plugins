@@ -1,24 +1,25 @@
 /**
- * `plugin.json` parsing and validation (`docs/explanation/design.md` §5.4).
+ * `plugin.json` parsing and validation (`docs/explanation/registration.md`).
  *
  * The manifest is a closed schema validated with Ajv against the vendored
  * Agent Plugins schema (`src/schemas/1.0.0-plugin.schema.json`), which is
  * committed to the repo and never fetched at runtime (the spec forbids
  * schema retrieval while loading a plugin).
  *
- * Validation order per design: unknown top-level keys are stripped first, so
+ * Validation order: unknown top-level keys are stripped first, so
  * a fatal error in a known field is never masked by the presence of unknown
  * ones, and the report-and-ignore reclassification of unknown fields is
  * meaningful only against the closed schema.
  */
 
 import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import type { Failure } from './errors.js';
 import { failure } from './errors.js';
+import { realpathInside } from './paths.js';
 
 const requireJson = createRequire(import.meta.url);
 
@@ -26,8 +27,9 @@ const requireJson = createRequire(import.meta.url);
 const PLUGIN_SCHEMA_1_0_0 = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 
 /**
- * Canonical schema identifiers this client implements (`docs/explanation/design.md`
- * §5.9). Adding a new spec version is a one-line extension of this map.
+ * Canonical schema identifiers this client implements
+ * (`docs/explanation/registration.md`). Adding a new spec version is a one-line
+ * extension of this map.
  */
 const SUPPORTED_PLUGIN_SCHEMAS: ReadonlySet<string> = new Set([PLUGIN_SCHEMA_1_0_0]);
 
@@ -88,14 +90,35 @@ export function schemaVersion(schemaId: string): string | null {
 /**
  * Reads and validates `<root>/plugin.json`.
  *
+ * The manifest path is resolved (realpath) and must stay inside the resolved
+ * plugin root: a symlinked `plugin.json` that points outside the package is
+ * rejected as `plugin-missing` (`docs/explanation/failures.md`).
+ *
  * @param pluginRoot - Absolute plugin root directory.
  * @returns The validation result. Rejection failures carry the taxonomy
  * kind (`plugin-missing`, `manifest-schema`, `manifest-fatal`).
  */
 export async function loadManifest(pluginRoot: string): Promise<ManifestResult> {
+  const manifestPath = join(pluginRoot, 'plugin.json');
+  const exists = await stat(manifestPath).catch(() => null);
+  if (exists === null) {
+    return {
+      ok: false,
+      failure: failure('plugin-missing', `plugin.json not found in ${pluginRoot}`),
+    };
+  }
+  if (!(await realpathInside(pluginRoot, manifestPath))) {
+    return {
+      ok: false,
+      failure: failure(
+        'plugin-missing',
+        `plugin.json in ${pluginRoot} resolves outside the plugin root`,
+      ),
+    };
+  }
   let text: string;
   try {
-    text = await readFile(join(pluginRoot, 'plugin.json'), 'utf8');
+    text = await readFile(manifestPath, 'utf8');
   } catch {
     return {
       ok: false,
@@ -163,7 +186,7 @@ function splitKnownFields(
       warnings.push(
         failure('manifest-unknown-fields', `unknown plugin.json field "${key}" ignored`, {
           field: key,
-          section: '§5.4',
+          section: 'registration.md',
         }),
       );
       continue;

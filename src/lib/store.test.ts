@@ -5,6 +5,7 @@ import {
   findStoreEntry,
   installedRootFor,
   listInstalled,
+  metaPathFor,
   readMeta,
   writeMeta,
   type StoreMeta,
@@ -49,7 +50,7 @@ describe('store metadata', () => {
     }
   });
 
-  it('round-trips an optional subdir field (§5.3.4)', async () => {
+  it('round-trips an optional subdir field (sources.md)', async () => {
     const home = await tempDir('oap-store-');
     try {
       const env = storeEnv(home.root);
@@ -79,11 +80,45 @@ describe('store metadata', () => {
       await mkdir(root, { recursive: true });
       await writeFile(join(root, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
       await writeMeta('org-hello', META, env);
-      // A stray swap leftover (crashed update, §5.12.3) must not look like
+      // A stray swap leftover (crashed update, cli-lifecycle.md) must not look like
       // a corrupted store entry to listInstalled/doctor.
       await mkdir(join(storeDir('installed', env), '.old-org-hello'), { recursive: true });
 
       expect((await listInstalled(env)).map((e) => e.slug)).toEqual(['org-hello']);
+    } finally {
+      await home.cleanup();
+    }
+  });
+});
+
+describe('store metadata shape', () => {
+  it.each([
+    ['an empty object', '{}'],
+    ['an array', '[]'],
+    [
+      'a missing resolvedCommit',
+      JSON.stringify({
+        source: 'https://github.com/org/hello.git',
+        url: 'https://github.com/org/hello.git',
+        installedAt: '2026-09-01T00:00:00.000Z',
+      }),
+    ],
+    [
+      'empty required fields',
+      JSON.stringify({ source: '', url: '', resolvedCommit: '', installedAt: '' }),
+    ],
+  ])('treats %s as corrupted metadata', async (_label, text) => {
+    const home = await tempDir('oap-store-shape-');
+    try {
+      const env = storeEnv(home.root);
+      const slug = 'org-hello';
+      await mkdir(installedRootFor(slug, env), { recursive: true });
+      await mkdir(storeDir('meta', env), { recursive: true });
+      await writeFile(metaPathFor(slug, env), text, 'utf8');
+
+      expect(await readMeta(slug, env)).toBeNull();
+      const listed = (await listInstalled(env)).find((entry) => entry.slug === slug);
+      expect(listed?.meta).toBeNull();
     } finally {
       await home.cleanup();
     }
@@ -138,8 +173,10 @@ describe('doctor', () => {
       const env = storeEnv(home.root);
       // Data dir that no plugin references.
       await mkdir(storeDir('data', env) + '/orphan', { recursive: true });
+      const configPath = join(plugin.root, 'opencode.json');
+      await writeFile(configPath, '{}', 'utf8');
       const { runDoctor } = await import('./doctor.js');
-      const report = await runDoctor({ kind: 'custom', path: plugin.root }, env);
+      const report = await runDoctor({ kind: 'custom', path: configPath }, env);
       expect(report.items.some((i) => i.kind === 'orphan-data' && i.id === 'orphan')).toBe(true);
     } finally {
       await home.cleanup();
@@ -147,7 +184,7 @@ describe('doctor', () => {
     }
   });
 
-  it('keeps a store entry referenced through a single-string source (§5.11)', async () => {
+  it('keeps a store entry referenced through a single-string source (cli-lifecycle.md)', async () => {
     const home = await tempDir('oap-doctor-');
     try {
       const env = storeEnv(home.root);

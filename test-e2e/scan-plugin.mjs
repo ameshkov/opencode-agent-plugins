@@ -13,14 +13,18 @@
  *   entries under `skills/`, unsupported MCP entry keys/types, and other
  *   component directories (`agents/`, `commands/`, ...).
  *
- * Usage: node /app/scan-plugin.mjs <plugin-root> [data-dir]
+ * Usage: node /app/scan-plugin.mjs <plugin-root>
+ *
+ * For an installed store tree (`<store>/installed/<slug>`) the scan passes the
+ * slug as the `PLUGIN_DATA` key, matching load time; other roots use the
+ * path-derived key.
  *
  * Copied into the image by `test-e2e/Dockerfile`; a diagnostic helper, not a
  * test case.
  */
 
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** Manifest fields the client understands; every other key is warn+ignored. */
 const KNOWN_MANIFEST_FIELDS = new Set([
@@ -148,7 +152,7 @@ async function scanSkillsLayout(root) {
     }
     for (const file of await walkFiles(join(skillsDir, entry.name))) {
       // `SKILL.md` directly inside the skill dir is the skill itself; only
-      // deeper files are nested (docs/explanation/design.md §5.6).
+      // deeper files are nested (docs/explanation/registration.md).
       if (file !== 'SKILL.md' && file.endsWith('SKILL.md')) {
         layout.nestedSkillFiles.push(`${entry.name}/${file}`);
       }
@@ -193,14 +197,15 @@ async function scanMcpRaw(root) {
   return result;
 }
 
-const [root, dataDir = '/tmp/scan-plugin-data'] = process.argv.slice(2);
+const [root] = process.argv.slice(2);
 if (root === undefined || root === '') {
-  console.error('usage: node scan-plugin.mjs <plugin-root> [data-dir]');
+  console.error('usage: node scan-plugin.mjs <plugin-root>');
   process.exit(2);
 }
 
 const { validatePluginTree } = await import('/app/plugin/build/lib/validate.js');
-const validated = await validatePluginTree(root, dataDir);
+const dataKey = basename(dirname(root)) === 'installed' ? basename(root) : undefined;
+const validated = await validatePluginTree(root, process.env, dataKey);
 
 const rawManifest = await readJson(join(root, 'plugin.json'));
 const manifestIsObject =

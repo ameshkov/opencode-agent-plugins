@@ -1,5 +1,5 @@
 /**
- * Client store layout and metadata (`docs/explanation/design.md` §5.3.2).
+ * Client store layout and metadata (`docs/explanation/sources.md`).
  *
  * The store keeps git-sourced plugin copies under `installed/<slug>/` (an
  * exported tree with no `.git`), client metadata under `meta/<slug>.json`
@@ -70,10 +70,32 @@ export async function readMeta(
 ): Promise<StoreMeta | null> {
   try {
     const text = await readFile(metaPathFor(slug, env), 'utf8');
-    return JSON.parse(text) as StoreMeta;
+    const parsed: unknown = JSON.parse(text);
+    return isStoreMeta(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+/** True when a parsed value has the required `StoreMeta` shape. */
+function isStoreMeta(value: unknown): value is StoreMeta {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ['source', 'url', 'resolvedCommit', 'installedAt']) {
+    const field = record[key];
+    if (typeof field !== 'string' || field === '') {
+      return false;
+    }
+  }
+  for (const key of ['ref', 'subdir', 'manifestVersion']) {
+    const field = record[key];
+    if (field !== undefined && (typeof field !== 'string' || field === '')) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -108,7 +130,7 @@ export async function removeMeta(slug: string, env: EnvLike = process.env): Prom
  *
  * Slugs without a readable metadata file are included with `meta: null`
  * (the `doctor` command reports them as corrupted). `.old-*` directories are
- * swap leftovers from crashed updates (§5.12.3), not store entries — they
+ * swap leftovers from crashed updates (cli-lifecycle.md), not store entries — they
  * are reported by `doctor`'s stale-leftover audit instead.
  *
  * @param env - Environment view for store-root resolution.

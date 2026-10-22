@@ -1,6 +1,6 @@
 /**
  * jsonc-parser node accessors for the OpenCode config's plugin arrays
- * (`docs/explanation/design.md` §5.11).
+ * (`docs/explanation/cli-lifecycle.md`).
  *
  * Three loader forms exist: the V2 `plugins` object entry
  * (`{ package, options }`), the V2 bare package string, and the legacy V1
@@ -138,6 +138,112 @@ export function objectValueOf(node: Node | undefined): Record<string, unknown> {
     : {};
 }
 
+/** Source list of a parsed config root, plus any shape problem. */
+export interface ConfigRootSources {
+  /** Source strings found (empty when the root has the wrong shape). */
+  sources: string[];
+  /** Why the source list cannot be trusted, or null when it is complete. */
+  problem: string | null;
+}
+
+/**
+ * Reads the plugin sources of a parsed config root and checks the shapes that
+ * make the list untrustworthy.
+ *
+ * @param root - Parsed config root node.
+ * @returns The sources and a shape problem (null when complete).
+ */
+export function configSourcesOfRoot(root: Node): ConfigRootSources {
+  if (root.type !== 'object') {
+    return { sources: [], problem: 'config root must be an object' };
+  }
+  const problem = pluginShapeProblem(root);
+  if (problem !== null) {
+    return { sources: [], problem };
+  }
+  return { sources: sourcesOfRoot(root), problem: null };
+}
+
+/** Reads the sources from an object root whose plugin arrays are well-formed. */
+function sourcesOfRoot(root: Node): string[] {
+  const plugins = findPluginsArray(root);
+  const sources = entrySourcesOf(plugins, findLoaderEntryIndex(plugins));
+  const legacy = findLegacyTuple(root);
+  if (legacy !== null) {
+    for (const source of legacy.sources) {
+      if (!sources.includes(source)) {
+        sources.push(source);
+      }
+    }
+  }
+  return sources;
+}
+
+/** Returns a shape problem that makes the source list untrustworthy, or null. */
+function pluginShapeProblem(root: Node): string | null {
+  const pluginsProperty = objectProperty(root, 'plugins');
+  if (pluginsProperty !== undefined && pluginsProperty.type !== 'array') {
+    return 'config "plugins" must be an array';
+  }
+  const plugins = findPluginsArray(root);
+  const entry = plugins?.children?.[findLoaderEntryIndex(plugins)];
+  if (entry !== undefined) {
+    const problem = entryShapeProblem(entry);
+    if (problem !== null) {
+      return problem;
+    }
+  }
+  const legacyProperty = objectProperty(root, 'plugin');
+  if (legacyProperty !== undefined && legacyProperty.type !== 'array') {
+    return 'config "plugin" must be an array';
+  }
+  for (const element of legacyProperty?.children ?? []) {
+    if (element.type !== 'array' || element.children?.[0]?.value !== PLUGIN_PACKAGE_NAME) {
+      continue;
+    }
+    const options = element.children?.[1];
+    if (options !== undefined && options.type !== 'object') {
+      return 'legacy loader tuple options must be an object';
+    }
+    if (options?.type === 'object') {
+      const problem = sourceShapeProblem(objectProperty(options, 'plugins'));
+      if (problem !== null) {
+        return problem;
+      }
+    }
+  }
+  return null;
+}
+
+/** Returns a shape problem of one V2 loader entry, or null. */
+function entryShapeProblem(entry: Node): string | null {
+  if (entry.type !== 'object') {
+    return null;
+  }
+  const options = objectProperty(entry, 'options');
+  if (options !== undefined && options.type !== 'object') {
+    return 'loader entry "options" must be an object';
+  }
+  if (options?.type === 'object') {
+    return sourceShapeProblem(objectProperty(options, 'plugins'));
+  }
+  return null;
+}
+
+/** Returns a shape problem of a `plugins` source option, or null. */
+function sourceShapeProblem(node: Node | undefined): string | null {
+  if (node === undefined || node.type === 'string') {
+    return null;
+  }
+  if (node.type !== 'array') {
+    return 'loader entry "options.plugins" must be a string or an array';
+  }
+  if (node.children?.some((child) => child.type !== 'string')) {
+    return 'loader entry "options.plugins" must contain only strings';
+  }
+  return null;
+}
+
 /**
  * Finds the legacy `plugin` array property of the config root (or undefined).
  *
@@ -173,7 +279,7 @@ function stringValuesOf(node: Node | undefined): string[] {
 /**
  * Reads a `plugins` option value as source strings.
  *
- * The option accepts a single string or an array (§3.1); a string value is
+ * The option accepts a single string or an array (registration.md); a string value is
  * one source.
  *
  * @param node - The `plugins` value node, or undefined.

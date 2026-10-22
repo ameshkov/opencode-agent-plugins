@@ -1,5 +1,5 @@
 /**
- * Registration pipeline for the plugin entry (`docs/explanation/design.md` §5.1–§5.8).
+ * Registration pipeline for the plugin entry (`docs/explanation/registration.md`).
  *
  * Everything from source resolution to component registration happens here.
  * The entry point (`index.ts`) is a thin bootstrap: these functions talk to
@@ -66,7 +66,7 @@ export async function registerAgentPlugins(
 /**
  * Registers one configured plugin source, isolating any thrown error.
  *
- * Defense in depth: every per-plugin failure is isolated (§5.1) — a thrown
+ * Defense in depth: every per-plugin failure is isolated (architecture.md) — a thrown
  * error must never abort the remaining plugins, so it is reported as a
  * `source-missing` failure and the run continues with an empty outcome.
  *
@@ -248,7 +248,7 @@ async function loadAndValidatePlugin(
 }
 
 /**
- * Reports §6 valid-absence conditions at debug level: missing `skills/`,
+ * Reports failures.md valid-absence conditions at debug level: missing `skills/`,
  * missing `mcp.json`, and unimplemented extension namespaces. All three are
  * valid, non-fatal states (the plugin keeps loading), so they stay silent at
  * the default info threshold and are only visible with `logLevel: "debug"`.

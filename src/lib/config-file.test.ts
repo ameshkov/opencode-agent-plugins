@@ -1,16 +1,18 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   configPreferenceNote,
   ConfigEditError,
+  readConfigText,
   resolveConfigFile,
   saveConfig,
 } from './config-file.js';
+import { storeDir } from './data.js';
 import { storeEnv, tempDir } from '../../test/helpers.js';
 
 describe('resolveConfigFile', () => {
-  it('prefers opencode.jsonc when both exist in the project scope (§5.11)', async () => {
+  it('prefers opencode.jsonc when both exist in the project scope (cli-lifecycle.md)', async () => {
     const dir = await tempDir('oap-cfg-scope-');
     try {
       await writeFile(join(dir.root, 'opencode.json'), '{}', 'utf8');
@@ -49,7 +51,7 @@ describe('resolveConfigFile', () => {
     }
   });
 
-  it('prefers opencode.jsonc in the global scope too (§5.11)', async () => {
+  it('prefers opencode.jsonc in the global scope too (cli-lifecycle.md)', async () => {
     const home = await tempDir('oap-cfg-home-');
     try {
       const globalDir = join(home.root, 'opencode');
@@ -182,6 +184,65 @@ describe('saveConfig', () => {
     } finally {
       await home.cleanup();
       await store.cleanup();
+    }
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'refuses to overwrite an existing unreadable config without a backup',
+    async () => {
+      const home = await tempDir('oap-cfg-home-');
+      const store = await tempDir('oap-cfg-store-');
+      const env = storeEnv(store.root);
+      const path = join(home.root, 'opencode.json');
+      const before = '{"theme":"dark"}';
+      try {
+        await writeFile(path, before, 'utf8');
+        await chmod(path, 0o200);
+        try {
+          await expect(saveConfig(path, '{"plugins": []}', env)).rejects.toThrow(
+            /config exists but could not be read/,
+          );
+        } finally {
+          await chmod(path, 0o600);
+        }
+        // Byte-identical content, no backup, no partial write.
+        expect(await readFile(path, 'utf8')).toBe(before);
+        expect(await readdir(storeDir('backups', env)).catch(() => [])).toEqual([]);
+      } finally {
+        await home.cleanup();
+        await store.cleanup();
+      }
+    },
+  );
+});
+
+describe('readConfigText', () => {
+  it('returns null for a missing config and the text for an existing one', async () => {
+    const dir = await tempDir('oap-cfg-read-');
+    try {
+      const path = join(dir.root, 'opencode.json');
+      expect(await readConfigText(path)).toBeNull();
+      await writeFile(path, '{"theme":"dark"}', 'utf8');
+      expect(await readConfigText(path)).toBe('{"theme":"dark"}');
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it.skipIf(process.getuid?.() === 0)('reports an unreadable config as an edit error', async () => {
+    const dir = await tempDir('oap-cfg-read-');
+    const path = join(dir.root, 'opencode.json');
+    try {
+      await writeFile(path, '{}', 'utf8');
+      await chmod(path, 0o200);
+      try {
+        await expect(readConfigText(path)).rejects.toThrow(ConfigEditError);
+        await expect(readConfigText(path)).rejects.toThrow(/could not be read/);
+      } finally {
+        await chmod(path, 0o600);
+      }
+    } finally {
+      await dir.cleanup();
     }
   });
 });

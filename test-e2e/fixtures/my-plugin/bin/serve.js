@@ -5,13 +5,13 @@
  * Reports the subprocess environment it was launched with (PLUGIN_ROOT,
  * PLUGIN_DATA, cwd, and whether the data dir exists) inside the `echo_ping`
  * tool RESULT, so the e2e test can assert the registration contract from the
- * executed tool round trip (docs/explanation/design.md §5.7–§5.8): environment injection,
+ * executed tool round trip (docs/explanation/registration.md, docs/explanation/sources.md): environment injection,
  * cwd defaulting, and the eagerly-created PLUGIN_DATA directory.
  *
- * It also proves placeholder expansion (§5.5): the fixture's mcp.json
+ * It also proves placeholder expansion (failures.md): the fixture's mcp.json
  * declares `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` literals inside `args` and `env`
  * values, and the loader must expand them BEFORE registration (opencode
- * passes env values verbatim — empirical finding §9.1.5). E2E_ROOT/E2E_DATA
+ * passes env values verbatim — empirical finding testing.md). E2E_ROOT/E2E_DATA
  * and the `--placeholder-*` args are the expanded values; ARGS_OK flips when
  * they match the injected PLUGIN_ROOT/PLUGIN_DATA.
  */

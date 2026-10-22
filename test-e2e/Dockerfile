@@ -4,7 +4,7 @@
 # repo, the fixture plugin packages, and a fake OpenAI-compatible model server.
 # EVERYTHING opencode-related runs inside this container; the vitest host only
 # starts/stops containers through testcontainers and asserts on the captured
-# model request (docs/explanation/design.md §9.1, §9.2.4).
+# model request (docs/explanation/testing.md).
 #
 # Build (from the repo root):
 #   docker build -f test-e2e/Dockerfile \
@@ -30,7 +30,7 @@ ENV OPENCODE_VERSION=${OPENCODE_VERSION}
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # git is required by the CLI's git-backed commands (install/check/update,
-# §5.11) and by the git fixture manager that mutates the fixture remote.
+# cli-lifecycle.md) and by the git fixture manager that mutates the fixture remote.
 # ca-certificates is required for HTTPS remotes (GitHub): the slim base image
 # ships no CA bundle, and git fails TLS verification without it (npm works
 # because Node bundles its own roots).
@@ -39,8 +39,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # The release the plugin is verified against — matches the
-# @opencode/plugin devDependency and the OPENCODE_VERSION CI env. V2 ships as
-# `@opencode/cli` (the legacy `opencode-ai` package is the V1 line). The
+# @opencode/plugin and @opencode/client pins and the OPENCODE_VERSION CI
+# env. V2 ships as `@opencode/cli` (the legacy `opencode-ai` package is the
+# V1 line). The
 # OpenAI-compatible provider package used by the fake model endpoint is
 # preinstalled so opencode resolves it from the global root at runtime.
 RUN npm install --global --no-fund --no-audit "@opencode/cli@${OPENCODE_VERSION}" \
@@ -51,9 +52,10 @@ WORKDIR /app
 # The plugin, compiled from this repo (build/ output only; the build gate
 # already guarantees zero OpenCode runtime imports). Copied with its
 # package.json so the loader treats build/index.js as ESM, and its runtime
-# deps (zod, ajv, jsonc-parser) are installed — without them the plugin
-# import fails at load (OpenCode logs `failed to load plugin` and skips it,
-# §5.1).
+# deps (zod, ajv) are installed — without them the plugin import fails at
+# load (OpenCode logs `failed to load plugin` and skips it,
+# architecture.md). jsonc-parser is CLI-only; the CLI build also needs
+# @opencode/client.
 WORKDIR /app/plugin
 COPY build/ /app/plugin/build/
 COPY package.json /app/plugin/package.json
@@ -70,10 +72,10 @@ RUN printf "export { default } from './build/index.js';\n" > /app/plugin/server.
 RUN npm install --omit=dev --no-fund --no-audit --package-lock=false --legacy-peer-deps
 
 # The same plugin as the npm package `opencode-agent-plugins` — the name the
-# CLI registers in the config (§5.11). Installed into the global npm root
+# CLI registers in the config (cli-lifecycle.md). Installed into the global npm root
 # (alongside @opencode/cli) AND the workspace project dir, so opencode can
 # resolve the package-name plugin entry from either resolution base (an
-# unresolvable name is reported at load and skipped, §5.1).
+# unresolvable name is reported at load and skipped, architecture.md).
 RUN npm install --global --no-fund --no-audit --omit=dev --legacy-peer-deps /app/plugin
 RUN mkdir -p /app/workspace \
   && printf '{\n  "name": "e2e-workspace",\n  "private": true\n}\n' > /app/workspace/package.json \
@@ -120,7 +122,7 @@ COPY test-e2e/fixtures/broken-plugin/ /app/fixtures/broken-plugin/
 COPY test-e2e/fixtures/mismatch-plugin/ /app/fixtures/mismatch-plugin/
 
 # User-authored skills fixture: a `hello` skill colliding with my-plugin's
-# (the skill-collision scenario; user config wins, §3.2/§5.6).
+# (the skill-collision scenario; user config wins, registration.md).
 COPY test-e2e/fixtures/user-skills/ /app/fixtures/user-skills/
 
 # Bare-command (PATH-resolved) MCP tool for the remote fixture.

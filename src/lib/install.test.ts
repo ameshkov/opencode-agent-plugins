@@ -1,9 +1,9 @@
 /**
  * `applyInstall` guard tests — a fatally-invalid plan must abort with nothing
- * changed on disk (`docs/explanation/design.md` §5.12.1).
+ * changed on disk (`docs/explanation/cli-lifecycle.md`).
  */
 
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { applyInstall, prepareInstall } from './install.js';
@@ -33,7 +33,42 @@ function packageManifest(name: string): string {
 }
 
 describe('applyInstall', () => {
-  it('refuses a fatally-invalid plan with nothing changed on disk (§5.12.1)', async () => {
+  it('expands ~/... path sources and rejects ~user/... (configuration.md)', async () => {
+    const home = await tempDir('oap-lib-home-');
+    const store = await tempDir('oap-lib-install-');
+    const originalHome = process.env['HOME'];
+    try {
+      const pluginRoot = join(home.root, 'plugin');
+      await mkdir(pluginRoot, { recursive: true });
+      await writeFile(join(pluginRoot, 'plugin.json'), VALID_PLUGIN_JSON, 'utf8');
+      process.env['HOME'] = home.root;
+      const env = storeEnv(store.root);
+
+      const prepared = await prepareInstall('~/plugin', process.cwd(), env);
+      expect(prepared.ok).toBe(true);
+      if (prepared.ok && prepared.plan !== undefined) {
+        expect(prepared.plan.kind).toBe('path');
+        expect(prepared.plan.root).toBe(join(home.root, 'plugin'));
+      }
+
+      const rejected = await prepareInstall('~nobody/plugin', process.cwd(), env);
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) {
+        expect(rejected.failure.kind).toBe('install-fail');
+        expect(rejected.failure.message).toContain('~user/... paths are not supported');
+      }
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env['HOME'];
+      } else {
+        process.env['HOME'] = originalHome;
+      }
+      await home.cleanup();
+      await store.cleanup();
+    }
+  });
+
+  it('refuses a fatally-invalid plan with nothing changed on disk (cli-lifecycle.md)', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': '{ not json' });
     const store = await tempDir('oap-lib-install-');
     const configPath = join(store.root, 'opencode.json');
@@ -63,7 +98,38 @@ describe('applyInstall', () => {
     }
   });
 
-  it('--no-register skips the config edit and reports it in the message (§5.11)', async () => {
+  it('rejects a path source cwd that escapes its own PLUGIN_DATA (failures.md)', async () => {
+    // The install-time key must match the load-time key (`<name>-<hash8>`).
+    // With the old `<store>/data` anchor this cwd passed install and then
+    // failed to load, because load time anchors at `<store>/data/<key>`.
+    const plugin = await tmpPlugin({
+      'plugin.json': VALID_PLUGIN_JSON,
+      'mcp.json': JSON.stringify({
+        $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+        mcpServers: {
+          echo: {
+            type: 'stdio',
+            command: 'echo',
+            cwd: '${PLUGIN_DATA}/../data/other-key',
+          },
+        },
+      }),
+    });
+    const store = await tempDir('oap-lib-install-');
+    const env = storeEnv(store.root);
+    try {
+      const prepared = await prepareInstall(plugin.root, process.cwd(), env);
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok || prepared.plan === undefined) return;
+      expect(prepared.plan.validated.servers).toEqual([]);
+      expect(prepared.plan.validated.warnings.map((f) => f.kind)).toEqual(['path-escape']);
+    } finally {
+      await plugin.cleanup();
+      await store.cleanup();
+    }
+  });
+
+  it('--no-register skips the config edit and reports it in the message (cli-lifecycle.md)', async () => {
     const plugin = await tmpPlugin({ 'plugin.json': VALID_PLUGIN_JSON });
     const store = await tempDir('oap-lib-install-');
     const configPath = join(store.root, 'opencode.json');
@@ -92,7 +158,7 @@ describe('applyInstall', () => {
     }
   });
 
-  it('rolls the store entry back when the config edit fails (§5.12.1)', async () => {
+  it('rolls the store entry back when the config edit fails (cli-lifecycle.md)', async () => {
     const fixture = await gitBareFixture({ 'plugin.json': VALID_PLUGIN_JSON });
     const store = await tempDir('oap-lib-install-');
     // A config path whose parent is a file makes the config write fail
@@ -123,7 +189,7 @@ describe('applyInstall', () => {
     }
   });
 
-  it('exports only the selected subdir and records it in metadata (§5.3.4)', async () => {
+  it('exports only the selected subdir and records it in metadata (sources.md)', async () => {
     const fixture = await gitBareFixture({
       'plugin.json': VALID_PLUGIN_JSON,
       'packages/alpha/plugin.json': packageManifest('alpha'),
@@ -165,7 +231,7 @@ describe('applyInstall', () => {
     }
   });
 
-  it('installs skill resource files alongside SKILL.md (§5.6)', async () => {
+  it('installs skill resource files alongside SKILL.md (registration.md)', async () => {
     const fixture = await gitBareFixture({
       'plugin.json': VALID_PLUGIN_JSON,
       'skills/hello/SKILL.md': skillMd('hello', 'Hi'),
@@ -201,7 +267,7 @@ describe('applyInstall', () => {
     }
   });
 
-  it('cleans the staging clone when the subdir fails validation (§5.12.1)', async () => {
+  it('cleans the staging clone when the subdir fails validation (cli-lifecycle.md)', async () => {
     const fixture = await gitBareFixture({
       'packages/alpha/plugin.json': '{ not json',
     });
@@ -236,7 +302,7 @@ describe('applyInstall', () => {
     }
   });
 
-  it('fails without writing when the subdir does not exist (§5.3.4)', async () => {
+  it('fails without writing when the subdir does not exist (sources.md)', async () => {
     const fixture = await gitBareFixture({ 'plugin.json': VALID_PLUGIN_JSON });
     const store = await tempDir('oap-lib-install-');
     const env = storeEnv(store.root);

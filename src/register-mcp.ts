@@ -1,5 +1,5 @@
 /**
- * MCP server registration for the plugin entry (`docs/explanation/design.md` §5.7).
+ * MCP server registration for the plugin entry (`docs/explanation/registration.md`).
  *
  * Registers validated `McpServerSpec`s through a V2 `ctx.mcp.transform`,
  * applying name sanitization and the user-config-wins collision rule. Lives
@@ -133,7 +133,10 @@ function countOutcome(registrable: RegistrableServer[]): McpOutcome {
   return { local, remote };
 }
 
-/** Reports a name collision: user config wins (warn) or plugin-plugin (error). */
+/**
+ * Reports a name collision: an earlier registration in this run (error) or an
+ * existing entry the editor cannot attribute (warning).
+ */
 async function reportCollision(
   name: string,
   spec: McpServerSpec,
@@ -146,7 +149,7 @@ async function reportCollision(
     'server-collision',
     owner
       ? `server name "${name}" is already used by another plugin in this run`
-      : `server name "${name}" is already defined in your config; user config wins`,
+      : `server name "${name}" is already defined; the existing registration wins`,
     { plugin: pluginName, server: spec.name },
   );
   await reportFailure({ ...f, level: owner ? 'error' : 'warn' }, logger, { plugin: pluginName });

@@ -47,7 +47,8 @@ describe('MCP registration', () => {
       expect(userEntry.command).toEqual(['user-cmd']);
       const collision = logsWithBoundary(stub, 'server-collision');
       expect(collision).toHaveLength(1);
-      expect(collision[0]!.message).toContain('user config wins');
+      expect(collision[0]!.message).toContain('the existing registration wins');
+      expect(collision[0]!.message).not.toContain('your config');
       expect(collision[0]!.level).toBe('warn');
     } finally {
       vi.unstubAllEnvs();
